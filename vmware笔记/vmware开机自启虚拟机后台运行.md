@@ -1,3 +1,4 @@
+## 创建`vmware_start.bat`
 ```batch
 @echo off
 
@@ -13,9 +14,9 @@ nogui
 start ^
 "E:\Users\59507\Documents\Virtual Machines\ubuntu-22.04.3\ubuntu-22.04.3.vmx" ^
 nogui
-
 ```
 
+## 创建`vmware_start.vbs`
 ```basic
 Dim ws
 Set ws = Wscript.CreateObject("Wscript.Shell")

@@ -14,7 +14,7 @@
               "type": "markdown",
               "state": {
                 "file": "vmware笔记/vmware开机自启虚拟机后台运行.md",
-                "mode": "source",
+                "mode": "preview",
                 "source": true
               },
               "icon": "lucide-file",
@@ -176,7 +176,7 @@
             }
           }
         ],
-        "currentTab": 5
+        "currentTab": 4
       }
     ],
     "direction": "horizontal",
@@ -193,7 +193,7 @@
       "obsidian-git:Open Git source control": false
     }
   },
-  "active": "3423dd6bd5405fba",
+  "active": "6ef2bf57573a64ad",
   "lastOpenFiles": [
     "PicGo+GitHub图床.md",
     "vmware笔记/vmware开机自启虚拟机后台运行.md",
