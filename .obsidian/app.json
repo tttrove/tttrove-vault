@@ -3,5 +3,6 @@
   "newLinkFormat": "relative",
   "newFileLocation": "current",
   "defaultViewMode": "preview",
-  "livePreview": false
+  "livePreview": false,
+  "attachmentFolderPath": "笔记测试/assets/测试图片插入"
 }
