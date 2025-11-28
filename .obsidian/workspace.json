@@ -4,21 +4,21 @@
     "type": "split",
     "children": [
       {
-        "id": "8ea00f338dd94a1b",
+        "id": "455f808f707f67ce",
         "type": "tabs",
         "children": [
           {
-            "id": "97642885666600df",
+            "id": "9e5fad1529e248a9",
             "type": "leaf",
             "state": {
-              "type": "split-diff-view",
+              "type": "markdown",
               "state": {
-                "aFile": ".obsidian/workspace.json",
-                "bFile": ".obsidian/workspace.json",
-                "aRef": ""
+                "file": "Linux笔记/实战笔记：Linux 多级跳板机 APT 代理方案.md",
+                "mode": "source",
+                "source": true
               },
-              "icon": "diff",
-              "title": "Diff: workspace.json"
+              "icon": "lucide-file",
+              "title": "实战笔记：Linux 多级跳板机 APT 代理方案"
             }
           }
         ]
@@ -193,12 +193,14 @@
       "obsidian-git:Open Git source control": false
     }
   },
-  "active": "97642885666600df",
+  "active": "4b77fa67efd3dbdb",
   "lastOpenFiles": [
-    "conflict-files-obsidian-git.md",
+    "Linux笔记/实战笔记：Linux 多级跳板机 APT 代理方案 1.md",
     "Linux笔记/实战笔记：Linux 多级跳板机 APT 代理方案.md",
-    "笔记测试/电脑测试.md",
+    "Linux笔记/从源码编译并打包 OpenSSH.md",
     "笔记测试/测试图片插入.md",
+    "笔记测试/电脑测试.md",
+    "conflict-files-obsidian-git.md",
     "PicGo+GitHub图床.md",
     "语雀存储图片.md",
     "笔记测试/assets/测试图片插入/file-20251128102842239.png",
@@ -206,7 +208,6 @@
     "笔记测试/assets/测试图片插入",
     "笔记测试/assets",
     "笔记测试",
-    "Linux笔记/从源码编译并打包 OpenSSH.md",
     "Linux笔记/CentOS7服务器安装.md",
     "Linux笔记/编译打包OpenSSL.md",
     "Linux笔记/Linux上云网关运维.md",
