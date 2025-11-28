@@ -1,4 +1,4 @@
-```basic
+```batch
 @echo off
 
 set VMRun="D:\Program Files (x86)\VMware\VMware Workstation\vmrun.exe"
