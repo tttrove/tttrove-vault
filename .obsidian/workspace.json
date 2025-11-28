@@ -11,14 +11,14 @@
             "id": "97642885666600df",
             "type": "leaf",
             "state": {
-              "type": "split-diff-view",
+              "type": "markdown",
               "state": {
-                "aFile": ".obsidian/workspace.json",
-                "bFile": ".obsidian/workspace.json",
-                "aRef": ""
+                "file": "笔记测试/电脑测试.md",
+                "mode": "source",
+                "source": false
               },
-              "icon": "diff",
-              "title": "Diff: workspace.json"
+              "icon": "lucide-file",
+              "title": "电脑测试"
             }
           }
         ]
@@ -156,12 +156,13 @@
             "state": {
               "type": "outline",
               "state": {
+                "file": "笔记测试/电脑测试.md",
                 "followCursor": true,
                 "showSearch": false,
                 "searchQuery": ""
               },
               "icon": "lucide-list",
-              "title": "大纲"
+              "title": "电脑测试 的大纲"
             }
           },
           {
@@ -192,7 +193,7 @@
       "obsidian-git:Open Git source control": false
     }
   },
-  "active": "3423dd6bd5405fba",
+  "active": "97642885666600df",
   "lastOpenFiles": [
     "conflict-files-obsidian-git.md",
     "笔记测试/电脑测试.md",
