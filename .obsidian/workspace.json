@@ -14,7 +14,7 @@
               "type": "markdown",
               "state": {
                 "file": "Linux笔记/实战笔记：Linux 多级跳板机 APT 代理方案.md",
-                "mode": "source",
+                "mode": "preview",
                 "source": true
               },
               "icon": "lucide-file",
@@ -193,7 +193,7 @@
       "obsidian-git:Open Git source control": false
     }
   },
-  "active": "4b77fa67efd3dbdb",
+  "active": "9e5fad1529e248a9",
   "lastOpenFiles": [
     "笔记测试/测试图片插入.md",
     "Linux笔记/从源码编译并打包 OpenSSH.md",
