@@ -147,7 +147,7 @@ curl --proxy socks5h://127.0.0.1:1080 https://www.baidu.com
 sudo apt -o Acquire::http::Proxy="socks5h://127.0.0.1:1080/" update
 ```
 
-3. **永久配置 (**`**/etc/apt/apt.conf.d/80proxy**`**):**
+3. **永久配置 (`/etc/apt/apt.conf.d/80proxy`):**
 
 ```bash
 Acquire::http::Proxy "socks5h://127.0.0.1:1080/";

@@ -4,11 +4,11 @@
     "type": "split",
     "children": [
       {
-        "id": "5cb4940b41407cd5",
+        "id": "d8121717b41b68c7",
         "type": "tabs",
         "children": [
           {
-            "id": "5674ddc9516b322e",
+            "id": "471d3d25dea6e08f",
             "type": "leaf",
             "state": {
               "type": "empty",
@@ -36,7 +36,7 @@
             "state": {
               "type": "file-explorer",
               "state": {
-                "sortOrder": "alphabetical",
+                "sortOrder": "byModifiedTime",
                 "autoReveal": false
               },
               "icon": "lucide-folder-closed",
@@ -152,17 +152,26 @@
             "state": {
               "type": "outline",
               "state": {
-                "file": "Linux笔记/实战笔记：Linux 多级跳板机 APT 代理方案.md",
                 "followCursor": true,
                 "showSearch": false,
                 "searchQuery": ""
               },
               "icon": "lucide-list",
-              "title": "实战笔记：Linux 多级跳板机 APT 代理方案 的大纲"
+              "title": "大纲"
+            }
+          },
+          {
+            "id": "3423dd6bd5405fba",
+            "type": "leaf",
+            "state": {
+              "type": "git-view",
+              "state": {},
+              "icon": "git-pull-request",
+              "title": "Source Control"
             }
           }
         ],
-        "currentTab": 4
+        "currentTab": 5
       }
     ],
     "direction": "horizontal",
@@ -179,20 +188,26 @@
       "obsidian-git:Open Git source control": false
     }
   },
-  "active": "4b77fa67efd3dbdb",
+  "active": "3423dd6bd5405fba",
   "lastOpenFiles": [
+    "笔记测试/电脑测试.md",
+    "PicGo+GitHub图床.md",
+    "笔记测试/测试图片插入.md",
+    "语雀存储图片.md",
+    "笔记测试/assets/测试图片插入/file-20251128102842239.png",
+    "笔记测试/assets/测试图片插入/file-20251128102539128.png",
+    "笔记测试/assets/测试图片插入",
+    "笔记测试/assets",
+    "Linux笔记/实战笔记：Linux 多级跳板机 APT 代理方案.md",
+    "笔记测试",
+    "Linux笔记/从源码编译并打包 OpenSSH.md",
+    "Linux笔记/CentOS7服务器安装.md",
+    "Linux笔记/编译打包OpenSSL.md",
+    "Linux笔记/Linux上云网关运维.md",
     "新建 文本文档.txt",
     "创建链接.md",
-    "Linux笔记/实战笔记：Linux 多级跳板机 APT 代理方案.md",
-    "Linux笔记/Linux上云网关运维.md",
-    "Linux笔记/编译打包OpenSSL.md",
-    "Linux笔记/CentOS7服务器安装.md",
-    "Linux笔记/从源码编译并打包 OpenSSH.md",
     "未命名.base",
-    "PicGo+GitHub图床.md",
-    "语雀存储图片.md",
     "欢迎.md",
-    "未命名.md",
     "实战笔记：Linux 多级跳板机 APT 代理方案.md",
     "从源码编译并打包 OpenSSH.md",
     "编译打包OpenSSL.md",
