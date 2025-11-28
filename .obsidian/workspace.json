@@ -156,13 +156,13 @@
             "state": {
               "type": "outline",
               "state": {
-                "file": "笔记测试/电脑测试.md",
+                "file": "PicGo+GitHub图床.md",
                 "followCursor": true,
                 "showSearch": false,
                 "searchQuery": ""
               },
               "icon": "lucide-list",
-              "title": "电脑测试 的大纲"
+              "title": "PicGo+GitHub图床 的大纲"
             }
           },
           {
@@ -176,7 +176,7 @@
             }
           }
         ],
-        "currentTab": 5
+        "currentTab": 4
       }
     ],
     "direction": "horizontal",
@@ -193,11 +193,12 @@
       "obsidian-git:Open Git source control": false
     }
   },
-  "active": "9e5fad1529e248a9",
+  "active": "4b77fa67efd3dbdb",
   "lastOpenFiles": [
-    "笔记测试/测试图片插入.md",
-    "Linux笔记/从源码编译并打包 OpenSSH.md",
+    "vmware笔记",
     "Linux笔记/实战笔记：Linux 多级跳板机 APT 代理方案.md",
+    "Linux笔记/从源码编译并打包 OpenSSH.md",
+    "笔记测试/测试图片插入.md",
     "Linux笔记/实战笔记：Linux 多级跳板机 APT 代理方案 1.md",
     "笔记测试/电脑测试.md",
     "conflict-files-obsidian-git.md",
