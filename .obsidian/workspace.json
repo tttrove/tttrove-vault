@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "Linux笔记/实战笔记：Linux 多级跳板机 APT 代理方案.md",
+                "file": "vmware笔记/vmware开机自启虚拟机后台运行.md",
                 "mode": "preview",
                 "source": true
               },
               "icon": "lucide-file",
-              "title": "实战笔记：Linux 多级跳板机 APT 代理方案"
+              "title": "vmware开机自启虚拟机后台运行"
             }
           }
         ]
@@ -156,13 +156,13 @@
             "state": {
               "type": "outline",
               "state": {
-                "file": "PicGo+GitHub图床.md",
+                "file": "vmware笔记/vmware开机自启虚拟机后台运行.md",
                 "followCursor": true,
                 "showSearch": false,
                 "searchQuery": ""
               },
               "icon": "lucide-list",
-              "title": "PicGo+GitHub图床 的大纲"
+              "title": "vmware开机自启虚拟机后台运行 的大纲"
             }
           },
           {
@@ -193,8 +193,10 @@
       "obsidian-git:Open Git source control": false
     }
   },
-  "active": "4b77fa67efd3dbdb",
+  "active": "9e5fad1529e248a9",
   "lastOpenFiles": [
+    "PicGo+GitHub图床.md",
+    "vmware笔记/vmware开机自启虚拟机后台运行.md",
     "vmware笔记",
     "Linux笔记/实战笔记：Linux 多级跳板机 APT 代理方案.md",
     "Linux笔记/从源码编译并打包 OpenSSH.md",
@@ -202,7 +204,6 @@
     "Linux笔记/实战笔记：Linux 多级跳板机 APT 代理方案 1.md",
     "笔记测试/电脑测试.md",
     "conflict-files-obsidian-git.md",
-    "PicGo+GitHub图床.md",
     "语雀存储图片.md",
     "笔记测试/assets/测试图片插入/file-20251128102842239.png",
     "笔记测试/assets/测试图片插入/file-20251128102539128.png",
