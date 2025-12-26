@@ -157,7 +157,7 @@
               "type": "outline",
               "state": {
                 "file": "提示词/专业知识笔记系统助手.md",
-                "followCursor": true,
+                "followCursor": false,
                 "showSearch": false,
                 "searchQuery": ""
               },
@@ -193,7 +193,7 @@
       "obsidian-git:Open Git source control": false
     }
   },
-  "active": "c6e799593d23902e",
+  "active": "6ef2bf57573a64ad",
   "lastOpenFiles": [
     "提示词/专业知识笔记系统助手.md",
     "vmware笔记/vmware开机自启虚拟机后台运行.md",
