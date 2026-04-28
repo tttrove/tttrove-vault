@@ -1,7 +1,7 @@
 # Ubuntu fail2ban 安装与配置指南
 
 > 适用系统：Ubuntu 20.04 / 22.04 / 24.04  
-> 最后更新：2026-04
+> 最后更新：2025-06
 
 ---
 
@@ -313,6 +313,8 @@ fail2ban-client get sshd ignoreip
 
 7. **生产环境建议 maxretry 不低于 3**，避免因手抖或网络抖动把合法用户误封。
 
+8. **修改 SSH 端口后，记得同步更新 `[sshd]` 节的 `port =`**，否则封禁动作仍针对 22 端口，形同虚设。改完执行 `fail2ban-client -t && systemctl reload fail2ban`。
+
 ---
 
 ## 完整配置文件参考
@@ -339,6 +341,13 @@ bantime.increment    = true
 bantime.factor       = 2
 bantime.maxtime      = 5w
 bantime.overalljails = true
+
+# -------------------------------------------------------
+# SSH 服务配置
+# 如果修改了 SSH 端口，同步修改下方 port 值，然后 reload
+# -------------------------------------------------------
+[sshd]
+port = 22   # 默认 22，改过 SSH 端口则改为对应值（如 2222）
 ```
 
-> **换项目时只需修改 `project_management_ips` 这一行即可。**
+> **换项目时只需修改 `project_management_ips` 这一行；若改了 SSH 端口，同步修改 `port =` 这一行。**
