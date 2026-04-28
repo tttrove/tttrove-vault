@@ -1,2 +1,29 @@
-/.obsidian/workspace.json
-/.obsidian/workspace-mobile.json
+# ===== Obsidian =====
+
+# 工作区状态（每次打开都会变，没必要同步）
+.obsidian/workspace.json
+.obsidian/workspace-mobile.json
+
+# 缓存文件
+.obsidian/cache
+#.obsidian/plugins/*/data.json   # 部分插件的本地状态（按需）
+
+# ===== 建议保留同步的 .obsidian 内容 =====
+# .obsidian/app.json            → 编辑器设置
+# .obsidian/appearance.json     → 主题/字体
+# .obsidian/core-plugins.json   → 核心插件开关
+# .obsidian/community-plugins.json → 社区插件列表
+# .obsidian/hotkeys.json        → 快捷键
+# .obsidian/templates/          → 模板配置
+
+# ===== 系统文件 =====
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ===== 其他常见内容 =====
+*.tmp
+*.log
+
+# Obsidian Sync 冲突文件（如果同时用了官方同步）
+# conflict-files-obsidian-sync/
