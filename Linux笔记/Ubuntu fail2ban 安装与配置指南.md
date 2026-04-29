@@ -340,18 +340,20 @@ maxretry = 5
 ignoreip = 127.0.0.1/8 ::1 %(project_management_ips)s
 
 # 逐级惩罚
-bantime.increment    = true   # 开启递增封禁功能
-bantime.factor       = 2      # 每次被封后封禁时长翻倍（1h → 2h → 4h → 8h ...）
-bantime.maxtime      = 5w     # 封禁时长上限，防止无限增长
-bantime.overalljails = true   # 跨所有 jail 合并计数，换端口/服务不会重置次数
-bantime.rndtime      = 7d     # IP 超过 7 天不再出现，重置其惩罚等级
+bantime.increment    = true
+bantime.factor       = 2
+bantime.maxtime      = 5w
+bantime.overalljails = true
+bantime.rndtime      = 7d
 
 # -------------------------------------------------------
 # SSH 服务配置
 # 如果修改了 SSH 端口，同步修改下方 port 值，然后 reload
 # -------------------------------------------------------
 [sshd]
-port = 22   # 默认 22，改过 SSH 端口则改为对应值（如 11022）
+enabled = true
+port = 22
+backend = systemd
 ```
 
 > **换项目时只需修改 `project_management_ips` 这一行；若改了 SSH 端口，同步修改 `port =` 这一行。**
