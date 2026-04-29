@@ -17,6 +17,8 @@
 8. [常用管理命令](#常用管理命令)
 9. [验证与排错](#验证与排错)
 10. [最佳实践](#最佳实践)
+11. [配置决策说明](#配置决策说明)
+12. [Ubuntu 22.04 sshd-session 兼容问题](#ubuntu-2204-的-sshd-session-兼容问题已验证)
 
 ---
 
@@ -351,9 +353,107 @@ bantime.rndtime      = 7d
 # 如果修改了 SSH 端口，同步修改下方 port 值，然后 reload
 # -------------------------------------------------------
 [sshd]
-enabled = true
-port = 22
-backend = systemd
+enabled      = true
+port         = 22
+backend      = systemd
+journalmatch = _SYSTEMD_UNIT=ssh.service
+# Ubuntu 22.04+ 兼容修复：允许匹配 sshd 和 sshd-session 两种进程名
+prefregex    = ^<F-MLFID>(?:\[\])?\s*(?:<[^.]+\.[^.]+>\s+)?(?:\S+\s+)?(?:kernel:\s?\[ *\d+\.\d+\]:?\s+)?(?:@vserver_\S+\s+)?(?:(?:(?:\[\d+\])?:\s+[\[\(]?(?:sshd(?:-session)?)(?:\(\S+\))?[\]\)]?:?|[\[\(]?(?:sshd(?:-session)?)(?:\(\S+\))?[\]\)]?:?(?:\[\d+\])?:?)\s+)?(?:\\[ID \d+ \S+\\]\s+)?</F-MLFID>(?:(?:error|fatal): (?:PAM: )?)?<F-CONTENT>.+</F-CONTENT>$
 ```
 
 > **换项目时只需修改 `project_management_ips` 这一行；若改了 SSH 端口，同步修改 `port =` 这一行。**
+
+---
+
+## 配置决策说明
+
+### 为什么要在行内去掉注释（`#`）
+
+fail2ban 使用类 INI 格式解析器，**配置值中不支持行内注释**。如果写成：
+
+```ini
+port = 22   # ssh port
+```
+
+解析器会将 `"22   # ssh port"` 整体作为端口值传递给 iptables，导致生成非法命令：
+
+```bash
+iptables -A f2b-sshd -p tcp --dport "22   # ssh port" -j REJECT
+```
+
+iptables 报错拒绝执行，结果是 fail2ban 认为已封禁，防火墙实际没有生效。**所有配置值后面不要写行内注释，注释单独写一行。**
+
+---
+
+### 为什么 `[sshd]` 节要显式写 `enabled = true`
+
+虽然 `defaults-debian.conf` 已经写了 `enabled = true`，但在 `custom.local` 中重复声明基于以下原因：
+
+**配置加载优先级（后者覆盖前者）：**
+
+```
+jail.conf → jail.d/*.conf → jail.local → jail.d/*.local
+```
+
+`.local` 文件优先级高于 `.conf`，显式写出 `enabled = true` 确保控制权始终在自定义文件中，防止系统更新重置 `.conf` 文件后 jail 意外关闭。
+
+此外，在某些发行版最小化安装中，sshd jail 默认是关闭的。在自定义文件里显式声明，保证配置在任何机器上都能直接生效，不依赖系统预设。
+
+---
+
+### 为什么 `[sshd]` 节要加 `backend = systemd`
+
+在 Ubuntu 22.04+ 中，日志系统以 `journald` 为主，`/var/log/auth.log` 仍然存在但不再是唯一来源。同时 Ubuntu 22.04 引入了 `sshd-session` 新标识符，fail2ban 默认的 `polling`（轮询文本文件）模式有时无法正确匹配这种新格式。
+
+设置 `backend = systemd` 后，fail2ban 直接向 journald 请求日志数据，而非读取文本文件，既更实时，也能完整兼容 `sshd-session` 标识符。
+
+> **如果使用 Ubuntu 20.04 或更早版本，可以省略此行，默认的 `backend = auto` 即可正常工作。**
+
+---
+
+### Ubuntu 22.04 的 sshd-session 兼容问题（已验证）
+
+#### 问题现象
+
+在 Ubuntu 22.04 上，即使攻击者多次输错密码，`fail2ban-client status sshd` 的 `Total failed` 始终为 0，封禁从不触发。
+
+用以下命令可以复现诊断过程：
+
+```bash
+# 喂日志给 filter，看匹配结果
+journalctl -u ssh --since "1 hour ago" | fail2ban-regex - /etc/fail2ban/filter.d/sshd.conf
+```
+
+输出中 `matched = 0`，missed 行全是 `sshd-session` 开头，说明 filter 认不出这个进程名。
+
+#### 根本原因
+
+Ubuntu 22.04 将 SSH 的进程名从 `sshd` 改成了 `sshd-session`，而 fail2ban 内置的 `prefregex`（预匹配正则）只认 `sshd`，导致所有日志行在进入 failregex 匹配之前就已被过滤掉，卫兵连敌人的面都见不到。
+
+```
+日志行：sshd-session[1234]: Failed password for root ...
+prefregex：只认 sshd ← 在这一关就拦住了，failregex 根本不执行
+```
+
+#### 解决方案
+
+在 `[sshd]` 节中覆盖 `prefregex`，加入 `(?:sshd(?:-session)?)` 同时兼容新旧两种进程名：
+
+```ini
+prefregex = ^<F-MLFID>(?:\[\])?\s*(?:<[^.]+\.[^.]+>\s+)?(?:\S+\s+)?(?:kernel:\s?\[ *\d+\.\d+\]:?\s+)?(?:@vserver_\S+\s+)?(?:(?:(?:\[\d+\])?:\s+[\[\(]?(?:sshd(?:-session)?)(?:\(\S+\))?[\]\)]?:?|[\[\(]?(?:sshd(?:-session)?)(?:\(\S+\))?[\]\)]?:?(?:\[\d+\])?:?)\s+)?(?:\\[ID \d+ \S+\\]\s+)?</F-MLFID>(?:(?:error|fatal): (?:PAM: )?)?<F-CONTENT>.+</F-CONTENT>$
+```
+
+与此同时加上 `journalmatch` 让 fail2ban 精准订阅 SSH 服务的日志源：
+
+```ini
+journalmatch = _SYSTEMD_UNIT=ssh.service
+```
+
+#### 验证方法
+
+配置生效后，从另一台机器故意输错密码，然后：
+
+```bash
+fail2ban-client status sshd
+# Banned IP list 中出现对方 IP 即为成功
+```
