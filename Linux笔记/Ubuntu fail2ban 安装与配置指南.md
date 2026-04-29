@@ -184,6 +184,9 @@ bantime.maxtime = 5w
 # 例如：SSH 失败 + HTTP 失败 共同计入惩罚次数
 # 防止攻击者换端口/服务后"洗白"记录
 bantime.overalljails = true
+
+# 记忆周期：IP 超过 7 天不再出现，重置其惩罚等级
+bantime.rndtime = 7d
 ```
 
 ### 封禁时长演进示例
@@ -337,10 +340,11 @@ maxretry = 5
 ignoreip = 127.0.0.1/8 ::1 %(project_management_ips)s
 
 # 逐级惩罚
-bantime.increment    = true
-bantime.factor       = 2
-bantime.maxtime      = 5w
-bantime.overalljails = true
+bantime.increment    = true   # 开启递增封禁功能
+bantime.factor       = 2      # 每次被封后封禁时长翻倍（1h → 2h → 4h → 8h ...）
+bantime.maxtime      = 5w     # 封禁时长上限，防止无限增长
+bantime.overalljails = true   # 跨所有 jail 合并计数，换端口/服务不会重置次数
+bantime.rndtime      = 7d     # IP 超过 7 天不再出现，重置其惩罚等级
 
 # -------------------------------------------------------
 # SSH 服务配置
