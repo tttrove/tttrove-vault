@@ -1,23 +1,25 @@
 {
   "attachmentFolderPath": "./assets/${noteFileName}",
-  "attachmentRenameMode": "All",
+  "attachmentRenameMode": "Only pasted images",
   "collectAttachmentUsedByMultipleNotesMode": "Skip",
   "collectedAttachmentFileName": "",
+  "convertImagesToJpegMode": "None",
   "customTokensStr": "",
   "defaultImageSize": "",
   "defaultImageSizeDimension": "width",
   "duplicateNameSeparator": " ",
-  "emptyAttachmentFolderBehavior": "DeleteWithEmptyParents",
+  "emptyFolderBehavior": "DeleteWithEmptyParents",
   "excludePaths": [],
   "excludePathsFromAttachmentCollecting": [],
-  "generatedAttachmentFileName": "file-${date:YYYYMMDDHHmmssSSS}",
+  "generatedAttachmentFileName": "file-${date:{momentJsFormat:'YYYYMMDDHHmmssSSS'}}",
   "includePaths": [],
   "jpegQuality": 0.8,
   "markdownUrlFormat": "",
+  "moveAttachmentToProperFolderUsedByMultipleNotesMode": "CopyAll",
   "renamedAttachmentFileName": "",
-  "shouldConvertPastedImagesToJpeg": false,
-  "shouldDeleteOrphanAttachments": false,
-  "shouldRenameAttachmentFiles": false,
+  "shouldDeleteOrphanAttachments": true,
+  "shouldHandleRenames": true,
+  "shouldRenameAttachmentFiles": true,
   "shouldRenameAttachmentFolder": true,
   "shouldRenameCollectedAttachments": false,
   "specialCharacters": "#^[]|*\\<>:?/",
@@ -26,5 +28,5 @@
   "treatAsAttachmentExtensions": [
     ".excalidraw.md"
   ],
-  "version": "9.18.0"
+  "version": "10.3.4"
 }
