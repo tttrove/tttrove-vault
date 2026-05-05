@@ -321,7 +321,3 @@ http {
     server_tokens off;
 }
 ```
-
----
-
-如需深入某个方向（如 Lua 扩展、动态 upstream、OpenResty、A/B 测试、灰度发布等），可以告诉我！
