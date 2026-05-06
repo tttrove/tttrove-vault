@@ -4,5 +4,6 @@
   "newFileLocation": "current",
   "defaultViewMode": "preview",
   "livePreview": false,
-  "attachmentFolderPath": "笔记测试/assets/测试图片插入"
+  "attachmentFolderPath": "笔记测试/assets/测试图片插入",
+  "showLineNumber": true
 }

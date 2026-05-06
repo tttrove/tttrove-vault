@@ -1,7 +1,7 @@
 # Ubuntu fail2ban 安装与配置指南
 
 > 适用系统：Ubuntu 20.04 / 22.04 / 24.04  
-> 最后更新：2026-04
+> 最后更新：2026-05
 
 ---
 
@@ -328,22 +328,22 @@ fail2ban-client get sshd ignoreip
 # /etc/fail2ban/jail.d/custom.local
 
 [DEFAULT]
-# -------------------------------------------------------
-# 修改此处以适配不同项目的管理机 IP
-# -------------------------------------------------------
+# ==================== 自定义白名单变量 =====================
+# 存放项目管理机 IP，支持DIRD格式，多个用空格分隔
+# 不同项目服务器只需修改这一行
 project_management_ips = 10.0.0.1
 
-# ==================== 基础行为参数 ====================
+# ===================== 基础行为参数 ========================
 # 初次封禁时长
-bantime  = 1h
-# 统计窗口（10 分钟内失败次数）
+bantime  = 10m
+# 统计窗口（30 分钟内失败次数）
 findtime = 30m
 # 最多允许 5 次失败尝试
 maxretry = 5
 # 白名单IP
 ignoreip = 127.0.0.1/8 ::1 %(project_management_ips)s
 
-# ==================== 日志后端（适配 journald） ==========
+# ==================== 日志后端（适配 journald） =============
 # 从 journalctl 读取日志
 backend      = systemd
 
@@ -352,10 +352,8 @@ backend      = systemd
 bantime.increment    = true
 # 翻倍系数
 bantime.factor       = 2
-# 最大封禁时长上限（5周）
-bantime.maxtime      = 5w
-# 跨 jail 合并计数
-bantime.overalljails = true
+# 最大封禁时长上限（24周）
+bantime.maxtime      = 24w
 # 每次额外附加 0~10 分钟随机时长，防攻击者预测
 bantime.rndtime      = 10m
 
@@ -366,10 +364,29 @@ enabled      = true
 port         = 22
 # 关键修正：journal 中 ssh 服务的 unit 名称是 ssh.service，不是 sshd.service
 journalmatch = _SYSTEMD_UNIT=ssh.service
-# OpenSSH 9.9版本以后 进程名从 sshd 变成 sshd-session
+# OpenSSH 9.8 及之后版本进程名从 sshd 变成 sshd-session
 # 匹配 sshd 和 sshd-session 两个进程名
-_daemon = sshd(?:-session)?
-# prefregex    = ^<F-MLFID>(?:\[\])?\s*(?:<[^.]+\.[^.]+>\s+)?(?:\S+\s+)?(?:kernel:\s?\[ *\d+\.\d+\]:?\s+)?(?:@vserver_\S+\s+)?(?:(?:(?:\[\d+\])?:\s+[\[\(]?(?:sshd(?:-session)?)(?:\(\S+\))?[\]\)]?:?|[\[\(]?(?:sshd(?:-session)?)(?:\(\S+\))?[\]\)]?:?(?:\[\d+\])?:?)\s+)?(?:\\[ID \d+ \S+\\]\s+)?</F-MLFID>(?:(?:error|fatal): (?:PAM: )?)?<F-CONTENT>.+</F-CONTENT>$
+prefregex    = ^<F-MLFID>(?:\[\])?\s*(?:<[^.]+\.[^.]+>\s+)?(?:\S+\s+)?(?:kernel:\s?\[ *\d+\.\d+\]:?\s+)?(?:@vserver_\S+\s+)?(?:(?:(?:\[\d+\])?:\s+[\[\(]?(?:sshd(?:-session)?)(?:\(\S+\))?[\]\)]?:?|[\[\(]?(?:sshd(?:-session)?)(?:\(\S+\))?[\]\)]?:?(?:\[\d+\])?:?)\s+)?(?:\\[ID \d+ \S+\\]\s+)?</F-MLFID>(?:(?:error|fatal): (?:PAM: )?)?<F-CONTENT>.+</F-CONTENT>$
+banaction    = iptables-multiport
+# 跨 jail 合并计数（只让 sshd 等业务 jail 参与，不影响 recidive 自身）
+bantime.overalljails = true
+
+# ==================== recidive 监狱（累犯监狱） ===============
+[recidive]
+enabled     = true
+# 过滤器使用内置的 recidive，无需额外编写
+filter      = recidive
+# 监控 Fail2ban 自身日志
+logpath     = /var/log/fail2ban.log
+# 统计窗口：1 天内
+findtime    = 1d
+# 1 天内被任何 jail 封禁 3 次，视为“惯犯”
+maxretry    = 3
+# 惯犯直接封禁 12 周（约 3 个月）
+bantime     = 12w
+# 沿用全局白名单，确保管理机不会被误抓
+ignoreip    = 127.0.0.1/8 ::1 %(project_management_ips)s
+
 ```
 
 > **换项目时只需修改 `project_management_ips` 这一行；若改了 SSH 端口，同步修改 `port =` 这一行。**
