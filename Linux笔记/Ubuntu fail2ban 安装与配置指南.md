@@ -343,6 +343,10 @@ maxretry = 5
 # 白名单IP
 ignoreip = 127.0.0.1/8 ::1 %(project_management_ips)s
 
+# ==================== 日志后端（适配 journald） ==========
+# 从 journalctl 读取日志
+backend      = systemd
+
 # ==================== 递增惩罚 + 随机时长 ===================
 # 开启递增，再次被封时长翻倍
 bantime.increment    = true
@@ -360,8 +364,6 @@ bantime.rndtime      = 10m
 enabled      = true
 # 填写 SSH 实际端口
 port         = 22
-# 从 journalctl 读取日志
-backend      = systemd
 # 关键修正：journal 中 ssh 服务的 unit 名称是 ssh.service，不是 sshd.service
 journalmatch = _SYSTEMD_UNIT=ssh.service
 # OpenSSH 9.9版本以后 进程名从 sshd 变成 sshd-session
