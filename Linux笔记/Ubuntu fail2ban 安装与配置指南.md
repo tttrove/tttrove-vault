@@ -331,34 +331,43 @@ fail2ban-client get sshd ignoreip
 # -------------------------------------------------------
 # 修改此处以适配不同项目的管理机 IP
 # -------------------------------------------------------
-project_management_ips = 10.0.0.0/24 10.0.0.1
+project_management_ips = 10.0.0.1
 
-# 基础封禁参数
+# ==================== 基础行为参数 ====================
+# 初次封禁时长
 bantime  = 1h
+# 统计窗口（10 分钟内失败次数）
 findtime = 30m
+# 最多允许 5 次失败尝试
 maxretry = 5
-
-# 白名单
+# 白名单IP
 ignoreip = 127.0.0.1/8 ::1 %(project_management_ips)s
 
-# 逐级惩罚
+# ==================== 递增惩罚 + 随机时长 ===================
+# 开启递增，再次被封时长翻倍
 bantime.increment    = true
+# 翻倍系数
 bantime.factor       = 2
+# 最大封禁时长上限（5周）
 bantime.maxtime      = 5w
+# 跨 jail 合并计数
 bantime.overalljails = true
-bantime.rndtime      = 7d
+# 每次额外附加 0~10 分钟随机时长，防攻击者预测
+bantime.rndtime      = 10m
 
-# -------------------------------------------------------
-# SSH 服务配置
-# 如果修改了 SSH 端口，同步修改下方 port 值，然后 reload
-# -------------------------------------------------------
+# ==================== sshd jail 专用覆盖 ===================
 [sshd]
 enabled      = true
+# 填写 SSH 实际端口
 port         = 22
+# 从 journalctl 读取日志
 backend      = systemd
+# 关键修正：journal 中 ssh 服务的 unit 名称是 ssh.service，不是 sshd.service
 journalmatch = _SYSTEMD_UNIT=ssh.service
-# Ubuntu 22.04+ 兼容修复：允许匹配 sshd 和 sshd-session 两种进程名
-prefregex    = ^<F-MLFID>(?:\[\])?\s*(?:<[^.]+\.[^.]+>\s+)?(?:\S+\s+)?(?:kernel:\s?\[ *\d+\.\d+\]:?\s+)?(?:@vserver_\S+\s+)?(?:(?:(?:\[\d+\])?:\s+[\[\(]?(?:sshd(?:-session)?)(?:\(\S+\))?[\]\)]?:?|[\[\(]?(?:sshd(?:-session)?)(?:\(\S+\))?[\]\)]?:?(?:\[\d+\])?:?)\s+)?(?:\\[ID \d+ \S+\\]\s+)?</F-MLFID>(?:(?:error|fatal): (?:PAM: )?)?<F-CONTENT>.+</F-CONTENT>$
+# OpenSSH 9.9版本以后 进程名从 sshd 变成 sshd-session
+# 匹配 sshd 和 sshd-session 两个进程名
+_daemon = sshd(?:-session)?
+# prefregex    = ^<F-MLFID>(?:\[\])?\s*(?:<[^.]+\.[^.]+>\s+)?(?:\S+\s+)?(?:kernel:\s?\[ *\d+\.\d+\]:?\s+)?(?:@vserver_\S+\s+)?(?:(?:(?:\[\d+\])?:\s+[\[\(]?(?:sshd(?:-session)?)(?:\(\S+\))?[\]\)]?:?|[\[\(]?(?:sshd(?:-session)?)(?:\(\S+\))?[\]\)]?:?(?:\[\d+\])?:?)\s+)?(?:\\[ID \d+ \S+\\]\s+)?</F-MLFID>(?:(?:error|fatal): (?:PAM: )?)?<F-CONTENT>.+</F-CONTENT>$
 ```
 
 > **换项目时只需修改 `project_management_ips` 这一行；若改了 SSH 端口，同步修改 `port =` 这一行。**
