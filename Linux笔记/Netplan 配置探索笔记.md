@@ -1,4 +1,4 @@
-# Netplan 配置工作笔记
+# Netplan 配置探索笔记
 
 > 起源：排查 VMware Ubuntu 22.04 虚拟机 SSH 周期性断连问题，意外深挖出 Netplan 在生产环境中最容易被忽略的配置细节。
 
@@ -313,4 +313,4 @@ sudo systemctl restart ssh
 
 ---
 
-*笔记来源：本机虚拟机断连排查 → 生产环境 Netplan 审查，2025年5月*
+*笔记来源：本机虚拟机断连排查 → 生产环境 Netplan 审查，2026年5月*
