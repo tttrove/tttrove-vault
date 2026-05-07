@@ -335,7 +335,7 @@ port         = 22
 journalmatch = _SYSTEMD_UNIT=ssh.service
 # 兼容 sshd 和 sshd-session 两种进程名（OpenSSH 9.8p1+）
 prefregex    = ^<F-MLFID>(?:\[\])?\s*(?:<[^.]+\.[^.]+>\s+)?(?:\S+\s+)?(?:kernel:\s?\[ *\d+\.\d+\]:?\s+)?(?:@vserver_\S+\s+)?(?:(?:(?:\[\d+\])?:\s+[\[\(]?(?:sshd(?:-session)?)(?:\(\S+\))?[\]\)]?:?|[\[\(]?(?:sshd(?:-session)?)(?:\(\S+\))?[\]\)]?:?(?:\[\d+\])?:?)\s+)?(?:\\[ID \d+ \S+\\]\s+)?</F-MLFID>(?:(?:error|fatal): (?:PAM: )?)?<F-CONTENT>.+</F-CONTENT>$
-# 指定 iptables 封禁
+# 封禁动作：用 iptables 封锁端口
 banaction    = iptables-multiport
 # 让 sshd 的封禁记录参与 recidive 的统计
 bantime.overalljails = true
