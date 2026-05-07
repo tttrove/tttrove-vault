@@ -3,35 +3,6 @@
 > 适用系统：Ubuntu 20.04 / 22.04 / 24.04  
 > 最后更新：2026-05
 
----
-
-## 目录
-
-1. [简介](#简介)
-2. [安装](#安装)
-3. [前置知识](#前置知识)
-   - [核心概念](#核心概念)
-   - [配置文件在哪里](#配置文件在哪里)
-4. [从零构建完整配置](#从零构建完整配置)
-   - [第一步：先看看系统默认给了什么](#第一步：先看看系统默认给了什么)
-   - [第二步：创建自定义文件，设定基础参数](#第二步：创建自定义文件，设定基础参数)
-   - [第三步：用变量管理白名单 IP](#第三步：用变量管理白名单-ip)
-   - [第四步：切换到 systemd 日志后端](#第四步：切换到-systemd-日志后端)
-   - [第五步：逐级惩罚，让攻击者付出递增代价](#第五步：逐级惩罚让攻击者付出递增代价)
-   - [第六步：sshd jail 的精细调校](#第六步：sshd-jail-的精细调校)
-   - [第七步：架设 recidive 惯犯监狱](#第七步：架设-recidive-惯犯监狱)
-5. [完整配置文件一览](#完整配置文件一览)
-6. [关键决策说明](#关键决策说明)
-   - [为什么行内不能写注释](#为什么行内不能写注释)
-   - [为什么显式声明 enabled = true](#为什么显式声明-enabled--true)
-   - [为什么指定 backend = systemd](#为什么指定backend--systemd)
-   - [sshd-session 兼容问题的完整诊断过程](#sshd-session-兼容问题的完整诊断过程)
-1. [常用管理命令](#常用管理命令)
-2. [验证与排错](#验证与排错)
-3. [最佳实践](#最佳实践)
-
----
-
 ## 简介
 
 fail2ban 是一个入侵防御框架，通过监控系统日志，自动封禁短时间内多次认证失败的 IP 地址，主要用于防御暴力破解攻击（SSH、HTTP、FTP 等服务）。
@@ -265,7 +236,7 @@ port         = 22
 journalmatch = _SYSTEMD_UNIT=ssh.service
 
 # 兼容 sshd 和 sshd-session 两种进程名
-# Ubuntu 22.04 开始，SSH 进程从 sshd 改成了 sshd-session
+# OpenSSH 9.8p1 开始，SSH 进程从 sshd 改成了 sshd-session
 # 这条 prefregex 同时匹配两种名称
 prefregex    = ^<F-MLFID>(?:\[\])?\s*(?:<[^.]+\.[^.]+>\s+)?(?:\S+\s+)?(?:kernel:\s?\[ *\d+\.\d+\]:?\s+)?(?:@vserver_\S+\s+)?(?:(?:(?:\[\d+\])?:\s+[\[\(]?(?:sshd(?:-session)?)(?:\(\S+\))?[\]\)]?:?|[\[\(]?(?:sshd(?:-session)?)(?:\(\S+\))?[\]\)]?:?(?:\[\d+\])?:?)\s+)?(?:\\[ID \d+ \S+\\]\s+)?</F-MLFID>(?:(?:error|fatal): (?:PAM: )?)?<F-CONTENT>.+</F-CONTENT>$
 
@@ -275,10 +246,10 @@ banaction    = iptables-multiport
 
 逐行说明：
 
-- **`enabled = true`**：虽然 `defaults-debian.conf` 已经写了，但在这里显式声明可以确保控制权在自己手里，不依赖系统预设（具体原因见[关键决策说明](#为什么显式声明-enabled--true)）。
+- **`enabled = true`**：虽然 `defaults-debian.conf` 已经写了，但在这里显式声明可以确保控制权在自己手里，不依赖系统预设。
 - **`port = 22`**：如果你的 SSH 监听的不是 22 端口，一定要同步改成实际端口，否则封禁动作仍针对 22 端口，形同虚设。
 - **`journalmatch`**：告诉 journald 只取 `ssh.service` 的日志，避免扫描全量日志，提升效率。注意 journald 中的 unit 名是 `ssh.service`，不是 `sshd.service`。
-- **`prefregex`**：这是整个 sshd jail 最关键的配置。fail2ban 先用 prefregex 筛选日志行，再用 failregex 匹配失败记录。Ubuntu 22.04 将 SSH 进程名从 `sshd` 改成了 `sshd-session`，默认的 prefregex 只认 `sshd`，导致日志在进入 failregex 之前就被丢弃。通过 `(?:sshd(?:-session)?)` 这个正则片段，同时兼容新旧两种进程名。
+- **`prefregex`**：这是整个 sshd jail 最关键的配置。fail2ban 先用 prefregex 筛选日志行，再用 failregex 匹配失败记录。OpenSSH 9.8p1及之后版本 将 SSH 进程名从 `sshd` 改成了 `sshd-session`，默认的 prefregex 只认 `sshd`，导致日志在进入 failregex 之前就被丢弃。通过 `(?:sshd(?:-session)?)` 这个正则片段，同时兼容新旧两种进程名。
 - **`banaction`**：指定用 iptables 的多端口封锁动作。
 
 ### 第七步：架设 recidive 惯犯监狱
@@ -362,7 +333,7 @@ enabled      = true
 port         = 22
 # journal 中 ssh 服务的 unit 名称是 ssh.service，不是 sshd.service
 journalmatch = _SYSTEMD_UNIT=ssh.service
-# 兼容 sshd 和 sshd-session 两种进程名（Ubuntu 22.04+）
+# 兼容 sshd 和 sshd-session 两种进程名（OpenSSH 9.8p1+）
 prefregex    = ^<F-MLFID>(?:\[\])?\s*(?:<[^.]+\.[^.]+>\s+)?(?:\S+\s+)?(?:kernel:\s?\[ *\d+\.\d+\]:?\s+)?(?:@vserver_\S+\s+)?(?:(?:(?:\[\d+\])?:\s+[\[\(]?(?:sshd(?:-session)?)(?:\(\S+\))?[\]\)]?:?|[\[\(]?(?:sshd(?:-session)?)(?:\(\S+\))?[\]\)]?:?(?:\[\d+\])?:?)\s+)?(?:\\[ID \d+ \S+\\]\s+)?</F-MLFID>(?:(?:error|fatal): (?:PAM: )?)?<F-CONTENT>.+</F-CONTENT>$
 banaction    = iptables-multiport
 
