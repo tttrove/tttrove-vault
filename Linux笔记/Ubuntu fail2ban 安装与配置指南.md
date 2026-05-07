@@ -283,7 +283,7 @@ ignoreip    = 127.0.0.1/8 ::1 %(project_management_ips)s
 
 **为什么需要 recidive？** 前面 `[DEFAULT]` 中的逐级惩罚需要同一个 IP 在同一个 jail 中反复被封才会升级。如果攻击者打一枪换一个地方——SSH 被封了就换 HTTP，HTTP 被封了等解封再来——每次在新服务上都是「初犯」。recidive 跨 jail 累计封禁次数，堵住了这个漏洞。
 
-> `[sshd]` 节可以加 `bantime.overalljails = true` 让 sshd 的封禁记录参与 recidive 的统计，但这个参数更适合放在业务 jail 而非 `[DEFAULT]` 节，否则 recidive 自己也会被卷入递归统计。
+> `[sshd]` 节可以加 `bantime.overalljails = true` 让 sshd 的封禁记录参与 recidive 的统计，**绝不能放在 `[DEFAULT]` 或 `[recidive]` 节**：如果放在 `[DEFAULT]`，`recidive` 自己也会继承 `bantime.overalljails = true`，导致它自己的封禁记录被自己统计，形成递归循环。放在 `[recidive]` 里同理，会自我卷入。
 
 ---
 
@@ -335,7 +335,10 @@ port         = 22
 journalmatch = _SYSTEMD_UNIT=ssh.service
 # 兼容 sshd 和 sshd-session 两种进程名（OpenSSH 9.8p1+）
 prefregex    = ^<F-MLFID>(?:\[\])?\s*(?:<[^.]+\.[^.]+>\s+)?(?:\S+\s+)?(?:kernel:\s?\[ *\d+\.\d+\]:?\s+)?(?:@vserver_\S+\s+)?(?:(?:(?:\[\d+\])?:\s+[\[\(]?(?:sshd(?:-session)?)(?:\(\S+\))?[\]\)]?:?|[\[\(]?(?:sshd(?:-session)?)(?:\(\S+\))?[\]\)]?:?(?:\[\d+\])?:?)\s+)?(?:\\[ID \d+ \S+\\]\s+)?</F-MLFID>(?:(?:error|fatal): (?:PAM: )?)?<F-CONTENT>.+</F-CONTENT>$
+# 指定 iptables 封禁
 banaction    = iptables-multiport
+# 让 sshd 的封禁记录参与 recidive 的统计
+bantime.overalljails = true
 
 # ==================== recidive 监狱（惯犯监狱） ===============
 [recidive]
