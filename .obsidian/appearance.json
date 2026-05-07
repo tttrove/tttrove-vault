@@ -2,5 +2,6 @@
   "cssTheme": "GitHub Theme",
   "interfaceFontFamily": "",
   "monospaceFontFamily": "",
-  "theme": "moonstone"
+  "theme": "moonstone",
+  "baseFontSize": 16
 }
