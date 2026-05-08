@@ -69,6 +69,64 @@ w
 
 **可疑信号：** 凌晨时段的 root 登录、来自境外 IP 的登录、同一用户在极短时间内从不同 IP 登录。
 
+### 1.5 Shell 环境劫持识别
+
+SSH 登录后发现 `ls` 没有颜色、常用别名（`ll`、`la`）丢失、文件"看不到"——这些是攻击者劫持 Shell 环境以隐藏恶意文件的典型信号。
+
+**环境被劫持的典型表现：**
+
+| 现象 | 可能原因 |
+|------|----------|
+| `ls` 无颜色输出 | `alias ls='ls'` 或 `--color=never` 被强制设置 |
+| `ll` 命令不存在 | 别名被 `unalias` 移除 |
+| 文件"看不见" | `LD_PRELOAD` 劫持了 `readdir()`/`getdents()` |
+| `top` 看不到某进程 | `LD_PRELOAD` 劫持了 `/proc` 读取函数 |
+
+**立即排查命令：**
+
+```bash
+# 检查当前 shell 的所有别名
+alias
+
+# 检查是否设置了 LD_PRELOAD（最常见劫持手段）
+env | grep -iE 'LD_PRELOAD|LD_LIBRARY_PATH'
+
+# 检查 PROMPT_COMMAND 是否被注入恶意代码
+echo "$PROMPT_COMMAND"
+
+# 如果 env 不显示 LD_PRELOAD，直接检查 /proc
+cat /proc/self/environ | tr '\0' '\n' | grep LD_PRELOAD
+```
+
+**正常基线：** `alias ls='ls --color=auto'`，`alias ll='ls -alF'`，`LD_PRELOAD` 为空。
+
+**遇到劫持时的自救：**
+
+```bash
+# 启动一个干净的非交互 bash，绕过可能被污染的 rc 文件
+/bin/bash --norc --noprofile
+
+# 或使用 busybox（攻击者通常不会替换）
+busybox ls -la /tmp/
+busybox ps aux
+```
+
+**劫持的来源排查（SSH 登录环境）：**
+
+攻击者可能通过以下文件在 SSH 登录时注入环境变量或命令：
+
+```bash
+# 1. ~/.ssh/rc — SSH 登录后自动执行的脚本
+cat ~/.ssh/rc 2>/dev/null
+
+# 2. ~/.ssh/environment — SSH 登录时注入的环境变量
+cat ~/.ssh/environment 2>/dev/null
+
+# 3. 检查 sshd 是否允许用户自定义环境
+grep 'PermitUserEnvironment' /etc/ssh/sshd_config
+# 若输出 "PermitUserEnvironment yes" 且 ~/.ssh/environment 存在 — 已确认被利用
+```
+
 ---
 
 ## 2. 登录审计
@@ -200,6 +258,17 @@ done
 
 **可疑信号：** 出现了不认识的公钥；authorized_keys 文件的修改时间晚于你最后一次添加公钥的时间。
 
+> **进阶检查：** 攻击者常用 `chattr +i` 锁定 `authorized_keys`，使其无法被删除或覆盖，同时破坏 `.ssh` 目录的文件创建权限阻止 `known_hosts` 生成。若遇到 `Operation not permitted` 或无法创建文件，先查扩展属性：
+>
+> ```bash
+> # 查看所有文件的扩展属性（i = 不可变，a = 仅追加）
+> lsattr /root/.ssh/ /home/*/.ssh/ 2>/dev/null
+>
+> # 移除不可变属性
+> chattr -i /root/.ssh/authorized_keys
+> chattr -i /root/.ssh/
+> ```
+
 ### 3.5 检查 passwd 和 shadow 的修改时间
 
 ```bash
@@ -227,6 +296,33 @@ ps aux | grep -v grep | awk '{print $11}' | sort | uniq -c | sort -rn | head -20
 **正常基线：** 关键系统进程应只有唯一实例，且来自标准路径。
 
 **可疑信号：** 同名进程出现多个实例（如多个 `sshd` 但只有一个系统 sshd）；进程名包含大小写混淆（`SShd`、`SSHd`）。
+
+> **高危模式：伪装内核线程的挖矿程序。** 攻击者将恶意进程命名为与内核线程高度相似的名称以躲避排查：
+
+| 伪装名 | 模仿的内核线程 | 辨别方法 |
+|--------|--------------|----------|
+| `kswapd00` | `kswapd0` | 真正的 `kswapd0` PID 较小且 CPU 占用极低；名字多了个 `0` |
+| `kauditd0` | `kauditd` | 真正的 `kauditd` 几乎不占 CPU |
+| `kdevtmpfsi` | `kdevtmpfs` | 尾部多了 `i` |
+| `[kworkerds]` | `[kworker/*]` | 真正的 kworker 用方括号且名称格式为 `kworker/uX:Y` |
+
+```bash
+# 快速比对：找出不是内核线程但名称可疑的进程
+ps aux | grep -E 'kswapd|kauditd|kdevtmpfs|kworkerds' | grep -v 'grep'
+
+# 确认是否真的是内核线程（内核线程的 PID 通常很小，且 /proc/<pid>/exe 不存在）
+for name in kswapd0 kauditd kdevtmpfs; do
+    pid=$(pgrep "$name" 2>/dev/null)
+    if [ -n "$pid" ]; then
+        for p in $pid; do
+            exe=$(readlink /proc/$p/exe 2>/dev/null)
+            echo "$name PID=$p EXE=${exe:-(无，内核线程)}"
+        done
+    fi
+done
+```
+>
+> **辨别真伪的关键：** 真正的内核线程 `/proc/<pid>/exe` 不存在（`readlink` 返回空）；伪装的挖矿程序 `exe` 会指向 `/tmp/` 或隐藏目录下的可执行文件，且大量占用 CPU 核心。
 
 ### 4.2 检查被删除但仍在运行的进程
 
@@ -369,6 +465,31 @@ cat /proc/sys/kernel/tainted
 
 **可疑信号：** `ld.so.preload` 指向 `/tmp/` 下的 `.so` 文件（用于劫持 libc 函数如 `readdir`、`open` 等，隐藏进程和文件）。
 
+### 5.5 SSH rc 与环境变量注入
+
+攻击者在获得 root 权限后，常利用 `~/.ssh/rc` 和 `~/.ssh/environment` 在每次 SSH 登录时重新加载恶意环境。
+
+```bash
+# 检查 SSH rc 文件（每次 SSH 登录时自动执行）
+cat ~/.ssh/rc 2>/dev/null
+for h in /home/*; do
+    [ -f "$h/.ssh/rc" ] && echo "=== $h/.ssh/rc ===" && cat "$h/.ssh/rc"
+done
+
+# 检查 SSH environment 文件（注入环境变量如 LD_PRELOAD）
+cat ~/.ssh/environment 2>/dev/null
+for h in /home/*; do
+    [ -f "$h/.ssh/environment" ] && echo "=== $h/.ssh/environment ===" && cat "$h/.ssh/environment"
+done
+
+# 确认 sshd 是否开启了 PermitUserEnvironment（攻击者利用的前提）
+grep '^PermitUserEnvironment' /etc/ssh/sshd_config
+```
+
+**正常基线：** `~/.ssh/rc` 和 `~/.ssh/environment` 通常不存在；`PermitUserEnvironment` 默认 `no`。
+
+**可疑信号：** `rc` 中包含 `export LD_PRELOAD=...`；`environment` 中设置了指向 `/tmp/` 下 `.so` 文件的变量；`PermitUserEnvironment` 被改为 `yes`。
+
 ---
 
 ## 6. 文件与隐藏目录
@@ -440,6 +561,36 @@ find / -path /proc -prune -o -type f -perm -2000 -ls 2>/dev/null
 ```
 
 **可疑信号：** 非系统标准路径下的 SUID 二进制（如 `/tmp/su`、`/var/tmp/bash`）、攻击者自制的 SUID shell。
+
+### 6.6 chattr +i 文件锁检测
+
+攻击者获取 root 权限后，常用 `chattr +i` 将关键文件设为**不可变（immutable）**，防止被删除或覆盖，同时破坏目录的文件创建能力（如阻止 `known_hosts` 生成，导致每次 SSH 都出现指纹提示）。这是"占坑锁死"战术。
+
+```bash
+# 检查 .ssh 目录及其子文件的扩展属性
+lsattr /root/.ssh/ /home/*/.ssh/ 2>/dev/null
+
+# 全系统搜索设置了 +i 或 +a 属性的文件
+find / -path /proc -prune -o -path /sys -prune -o -type f -exec lsattr {} \; 2>/dev/null | grep -E '^.{4}i'
+```
+
+**属性标记解读：**
+
+| 标记 | 含义 | 攻击者的目的 |
+|------|------|------------|
+| `i` | 不可变（immutable），连 root 也不能删除/修改/重命名 | 锁死 `authorized_keys` 或 `.ssh` 目录 |
+| `a` | 仅追加（append-only），只能追加内容不能删除 | 保护日志不被清空的同时阻止管理操作 |
+
+**解锁：**
+
+```bash
+chattr -i /root/.ssh/authorized_keys
+chattr -i /root/.ssh/
+```
+
+**常见被锁目标：** `/root/.ssh/authorized_keys`、`/root/.ssh/`（整个目录）、`~/.bash_history`（阻止记录操作）。
+
+**注意：** 攻击者也可能在 `/etc/`、`/usr/bin/` 等关键路径设置 `+i`，阻止你替换被感染的二进制文件。
 
 ---
 
@@ -764,6 +915,9 @@ cat > /root/security_check.sh << 'EOF'
     find /tmp -type f -executable 2>/dev/null
     echo "--- Unauthorized SSH keys ---"
     find /home /root -name authorized_keys -exec ls -la {} \; 2>/dev/null
+    echo "--- Immutable files (chattr +i) ---"
+    lsattr /root/.ssh/ /home/*/.ssh/ 2>/dev/null | grep -E '^.{4}i'
+    find /etc/ssh -type f -exec lsattr {} \; 2>/dev/null | grep -E '^.{4}i'
     echo "=== END ==="
 } >> /var/log/security_check.log 2>&1
 EOF
@@ -773,4 +927,174 @@ chmod +x /root/security_check.sh
 # 配置每天凌晨 3 点自动执行
 (crontab -l 2>/dev/null; echo "0 3 * * * /root/security_check.sh") | crontab -
 ```
+
+---
+
+## 11. 真实案例：SSH 爆破 → Crypto Miner 全链路
+
+> 以下内容脱敏自生产环境真实入侵事件，攻击者通过 SSH 密码爆破获得 root 权限后部署挖矿木马，并实施多层反侦察手段。
+
+### 11.1 攻击链路总览
+
+```
+SSH 端口暴露 → 密码爆破 → root 登录成功
+    → 上传 Miner 二进制（~/.configrc7/a/kswapd00、/tmp/.kswapd00）
+    → 部署持久化（crontab + @reboot + .ssh/rc）
+    → 隐藏痕迹（LD_PRELOAD 劫持 + chattr +i 锁文件 + 伪装内核线程名）
+```
+
+### 11.2 第一阶段：爆破登录
+
+攻击者从多个 IP 对 `root` 账号发动密码爆破，历史日志显示连续爆破后多次 `Accepted password for root` 成功：
+
+```bash
+# 提取入侵期间所有成功登录的 IP
+journalctl -u ssh --no-pager \
+  | sed -n 's/.*Accepted password for \([^ ]*\) from \([^ ]*\).*/\1 \2/p' \
+  | sort -u
+```
+
+输出看到 `root` 对应了 7 个不同 IP：`58.213.84.194`、`117.89.134.58`、`180.98.144.80`、`180.111.229.146`、`183.209.135.173`、`223.104.104.48`、`1.203.166.134`。
+
+> **教训：** root + 密码 + 22 端口暴露，必然被爆。正确的做法是强制公钥登录、禁用 root 登录、配合 fail2ban。
+
+### 11.3 第二阶段：环境劫持（反侦察）
+
+登录后第一时间感到异常：`ls` 没有颜色、`ll` 命令不存在、`ls` 看不到恶意文件。
+
+**根因：** 攻击者通过 `~/.ssh/rc` 或 `LD_PRELOAD` 劫持了 Shell 环境，使得 `ls` 输出不区分颜色（隐藏文件与普通文件混在一起），且阻断了 `readdir()` 系统调用，使隐藏目录不可见。
+
+**自救方法：**
+
+```bash
+# 重新启动干净的 bash（绕过被污染的 rc 文件）
+/bin/bash --norc --noprofile
+```
+
+执行后 `ls` 恢复颜色，`ll` 可用，隐藏的挖矿文件 `.kswapd00` 立即可见。
+
+### 11.4 第三阶段：挖矿进程伪装
+
+受害服务器上发现的恶意进程：
+
+| 伪装进程名 | 模仿对象 | 真实路径 | 行为 |
+|-----------|---------|---------|------|
+| `kauditd0` | 内核审计线程 `kauditd` | `~/.configrc7/a/kswapd00` | 占用几十个 CPU 线程，每个 100% |
+| `.kswapd00` | 内核交换线程 `kswapd0` | `/tmp/.kswapd00` | 2.2MB ELF 可执行文件，Miner 主程序 |
+
+**排查要点：** 伪装的进程名与内核线程仅差 1-2 个字符（`kswapd0` → `kswapd00`，`kauditd` → `kauditd0`），不仔细看极难发现。
+
+```bash
+# 确认真伪：内核线程的 exe 不存在
+readlink /proc/$(pgrep kswapd0)/exe   # 无输出 → 真正的内核线程
+readlink /proc/$(pgrep kswapd00)/exe  # /tmp/.kswapd00 → 伪装的挖矿程序
+
+# 内核线程的 PID 普遍较小，且括号包裹
+ps aux | grep -E '\[.*\]'
+```
+
+### 11.5 第四阶段：多层持久化
+
+攻击者部署了三套独立的持久化机制，确保即使清理不彻底也能自动复活：
+
+**1. crontab（6 个恶意条目）：**
+
+```
+*/30 * * * * /tmp/.kswapd00                                     # 每 30 分钟执行 Miner
+*/30 * * * * /root/.configrc7/a/kswapd00                        # 备用副本
+5 6 */2 * 0 /root/.configrc7/a/upd                              # 每两周周日更新
+@reboot /root/.configrc7/a/upd                                   # 开机自启
+5 8 * * 0 /root/.configrc7/b/sync                               # 每周日同步
+@reboot /root/.configrc7/b/sync                                  # 开机自启
+0 0 */3 * * /tmp/.X291-unix/.rsync/c/aptitude                   # 每 3 天一次
+```
+
+**关键模式：**
+- 多个目录存放副本（`/tmp/`、`~/.configrc7/a/`、`~/.configrc7/b/`、`/tmp/.X291-unix/`）
+- `@reboot` 保证重启后复活
+- 更新器和同步器保证版本迭代
+
+**2. 目录命名伪装：**
+
+| 路径 | 伪装对象 |
+|------|---------|
+| `~/.configrc7/` | 仿 `~/.configrc`（bash 配置目录） |
+| `/tmp/.X291-unix/` | 仿 `/tmp/.X11-unix/`（X Window 合法目录） |
+
+**3. authorized_keys 植入 + 文件锁：**
+
+```bash
+# authorized_keys 中被追加的攻击者公钥（comment 为 "mdrfckr"）
+cat ~/.ssh/authorized_keys
+# ssh-rsa AAAAB3NzaC1... mdrfckr
+
+# 尝试清空 → Operation not permitted
+> ~/.ssh/authorized_keys
+# bash: authorized_keys: Operation not permitted
+
+# 原因：被 chattr +i 锁死
+lsattr ~/.ssh/authorized_keys
+# ----i--------e-- ~/.ssh/authorized_keys
+
+# 连 .ssh 目录本身也被锁，导致 known_hosts 无法创建
+touch ~/.ssh/known_hosts
+# touch: setting times of 'known_hosts': No such file or directory
+```
+
+**解锁操作：**
+
+```bash
+chattr -i ~/.ssh/authorized_keys
+chattr -i ~/.ssh/
+> ~/.ssh/authorized_keys
+```
+
+### 11.6 清理步骤
+
+按以下顺序执行，避免残留：
+
+```bash
+# 1. 停止伪装的内核线程
+kill -9 $(pgrep -f kswapd00) 2>/dev/null
+kill -9 $(pgrep kauditd0) 2>/dev/null
+
+# 2. 清理 crontab 恶意条目（确认最后一行正常脚本后注释或删除）
+crontab -e
+# 删除或注释所有非预期行，保留 @reboot /bin/bash /root/video-api-pre/startup.sh start
+
+# 3. 解除文件锁并清空 hostile key
+chattr -i /root/.ssh/authorized_keys /root/.ssh/
+> /root/.ssh/authorized_keys
+rm -f /root/.ssh/rc /root/.ssh/environment
+
+# 4. 删除所有恶意文件与目录
+rm -rf /root/.configrc7
+rm -f /tmp/.kswapd00
+rm -rf /tmp/.X291-unix
+# 注意：先打包保留证据
+tar -czf /root/configrc7.tar.gz /root/.configrc7
+
+# 5. 检查并移除 LD_PRELOAD
+cat /etc/ld.so.preload && > /etc/ld.so.preload
+unset LD_PRELOAD
+
+# 6. 重建 known_hosts（修复跳板机指纹问题）
+touch /root/.ssh/known_hosts
+
+# 7. 立即加固 SSH（禁用密码 + root 登录）
+sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config
+sed -i 's/^#*PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config
+systemctl restart sshd
+```
+
+### 11.7 未处理时的持续风险
+
+如果仅删除文件但不加固 SSH，攻击者在以下时机可以重新入侵：
+
+1. **crontab 未清理** → Miner 每 30 分钟从 `/tmp/.kswapd00` 复活
+2. **authorized_keys 未清空** → 攻击者通过公钥免密登录
+3. **SSH 密码登录未禁用** → 爆破继续，二次沦陷
+4. **LD_PRELOAD 未清除** → 即使清理了文件，`ls` 和 `top` 仍然被劫持
+
+> **结论：** 手动清理只是临时措施。被 root 权限入侵过的机器，唯一安全的选择是**重装系统**。
 
