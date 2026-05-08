@@ -580,12 +580,13 @@ find / -path /proc -prune -o -path /sys -prune -o -type f -exec lsattr {} \; 2>/
 |------|------|------------|
 | `i` | 不可变（immutable），连 root 也不能删除/修改/重命名 | 锁死 `authorized_keys` 或 `.ssh` 目录 |
 | `a` | 仅追加（append-only），只能追加内容不能删除 | 保护日志不被清空的同时阻止管理操作 |
+| `ia` | 同时设置不可变+仅追加，双锁组合 | 连 `chattr -i` 单独解都不行，必须 `chattr -ia` 一起解 |
 
 **解锁：**
 
 ```bash
-chattr -i /root/.ssh/authorized_keys
-chattr -i /root/.ssh/
+chattr -ia /root/.ssh/authorized_keys
+chattr -ia /root/.ssh/
 ```
 
 **常见被锁目标：** `/root/.ssh/authorized_keys`、`/root/.ssh/`（整个目录）、`~/.bash_history`（阻止记录操作）。
@@ -1032,20 +1033,22 @@ cat ~/.ssh/authorized_keys
 > ~/.ssh/authorized_keys
 # bash: authorized_keys: Operation not permitted
 
-# 原因：被 chattr +i 锁死
+# 原因：被 chattr +ia 双锁（immutable + append-only）
 lsattr ~/.ssh/authorized_keys
-# ----i--------e-- ~/.ssh/authorized_keys
+# ----ia-------e-- ~/.ssh/authorized_keys
 
-# 连 .ssh 目录本身也被锁，导致 known_hosts 无法创建
+# 连 .ssh 目录本身也被双锁，导致 known_hosts 无法创建
+lsattr -d ~/.ssh
+# ----ia-------e-- /root/.ssh
 touch ~/.ssh/known_hosts
 # touch: setting times of 'known_hosts': No such file or directory
 ```
 
-**解锁操作：**
+**解锁操作（必须 `-ia` 一起解，单独 `-i` 不够）：**
 
 ```bash
-chattr -i ~/.ssh/authorized_keys
-chattr -i ~/.ssh/
+chattr -ia ~/.ssh/authorized_keys
+chattr -ia ~/.ssh/
 > ~/.ssh/authorized_keys
 ```
 
@@ -1062,8 +1065,8 @@ kill -9 $(pgrep kauditd0) 2>/dev/null
 crontab -e
 # 删除或注释所有非预期行，保留 @reboot /bin/bash /root/video-api-pre/startup.sh start
 
-# 3. 解除文件锁并清空 hostile key
-chattr -i /root/.ssh/authorized_keys /root/.ssh/
+# 3. 解除文件双层锁并清空 hostile key
+chattr -ia /root/.ssh/authorized_keys /root/.ssh/
 > /root/.ssh/authorized_keys
 rm -f /root/.ssh/rc /root/.ssh/environment
 
