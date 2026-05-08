@@ -138,9 +138,9 @@ grep 'PermitUserEnvironment' /etc/ssh/sshd_config
 ### 2.1 提取密码登录成功的记录
 
 ```bash
-# 提取所有密码认证成功的用户名与源 IP，去重
+# 提取所有密码认证成功的用户名与源 IP，去重（-E 扩展正则，捕获组无需转义）
 journalctl -u ssh --no-pager \
-  | sed -n 's/.*Accepted password for \([^ ]*\) from \([^ ]*\).*/\1 \2/p' \
+  | sed -En 's/.*Accepted password for (\S+) from (\S+).*/\1 \2/p' \
   | sort -u
 ```
 
@@ -153,7 +153,7 @@ journalctl -u ssh --no-pager \
 ```bash
 # 每个用户关联了多少不同 IP
 journalctl -u ssh --no-pager \
-  | sed -n 's/.*Accepted password for \([^ ]*\) from \([^ ]*\).*/\1 \2/p' \
+  | sed -En 's/.*Accepted password for (\S+) from (\S+).*/\1 \2/p' \
   | sort -u \
   | awk '{cnt[$1]++} END {for(u in cnt) print cnt[u], u}' \
   | sort -rn
@@ -164,7 +164,7 @@ journalctl -u ssh --no-pager \
 ```bash
 # 公钥登录也可能被利用（如果攻击者上传了自己的公钥）
 journalctl -u ssh --no-pager \
-  | sed -n 's/.*Accepted publickey for \([^ ]*\) from \([^ ]*\).*/\1 \2/p' \
+  | sed -En 's/.*Accepted publickey for (\S+) from (\S+).*/\1 \2/p' \
   | sort -u
 ```
 
@@ -233,8 +233,8 @@ cat /etc/sudoers 2>/dev/null | grep -v '^#' | grep -v '^$'
 # 查看 sudoers.d 下所有文件
 find /etc/sudoers.d/ -type f -exec echo "--- {} ---" \; -exec grep -v '^#' {} \;
 
-# 查看哪些用户拥有 sudo 权限
-grep -Po '^sudo:.+:\K.*' /etc/group
+# 查看哪些用户拥有 sudo 权限（用 awk 替代 grep -P，避免 PCRE 依赖）
+awk -F: '/^sudo:/{print $NF}' /etc/group
 ```
 
 **可疑信号：** `ALL=(ALL) NOPASSWD: ALL` 出现在不认识的用户或组上。
@@ -909,7 +909,7 @@ cat > /root/security_check.sh << 'EOF'
     echo "--- Recently modified binaries ---"
     find /bin /sbin /usr/bin /usr/sbin -type f -mtime -1 -ls 2>/dev/null
     echo "--- Suspicious crontabs ---"
-    grep -r "curl\|wget\|/tmp\|/dev/shm" /var/spool/cron/crontabs/ /etc/crontab /etc/cron.*/ 2>/dev/null
+    grep -rE "curl|wget|/tmp|/dev/shm" /var/spool/cron/crontabs/ /etc/crontab /etc/cron.*/ 2>/dev/null
     echo "--- Listening ports ---"
     ss -tlnp
     echo "--- /tmp executables ---"
@@ -951,7 +951,7 @@ SSH 端口暴露 → 密码爆破 → root 登录成功
 ```bash
 # 提取入侵期间所有成功登录的 IP
 journalctl -u ssh --no-pager \
-  | sed -n 's/.*Accepted password for \([^ ]*\) from \([^ ]*\).*/\1 \2/p' \
+  | sed -En 's/.*Accepted password for (\S+) from (\S+).*/\1 \2/p' \
   | sort -u
 ```
 

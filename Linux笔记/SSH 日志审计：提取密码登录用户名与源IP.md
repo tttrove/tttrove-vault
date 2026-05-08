@@ -2,7 +2,23 @@
 
 > 适用场景：服务器被 SSH 爆破后，需要追溯有哪些用户名通过密码登录成功，以及来自哪些 IP  
 > 日志来源：`journalctl -u ssh` 或 `/var/log/auth.log`  
-> 核心工具：`sed`、`grep`、`awk`、`sort -u`
+> 核心工具：`sed -E`、`grep -E`、`awk`、`sort -u`
+
+---
+
+## 正则模式速查
+
+三种正则模式差异显著，本文一律使用 **ERE 扩展正则**：
+
+| 模式 | 全称 | 工具示例 | 捕获组写法 | `|` 分支 | `+` 量词 | 推荐程度 |
+|------|------|---------|-----------|---------|---------|---------|
+| BRE | Basic RegEx | `grep`（默认）、`sed`（默认） | `\(...\)` 要反斜杠 | `\|` | `\+` | 避免使用，反直觉 |
+| **ERE** | **Extended RegEx** | **`grep -E`、`sed -E`、`awk`** | **`(...)` 无需转义** | **`\|`** | **`+`** | **优先使用** |
+| PCRE | Perl Compatible | `grep -P`（GNU 专属） | `(...)` | `\|` | `+` | 仅 GNU，非 POSIX |
+
+> **原则：能用 ERE 就不用 BRE/PCRE。** `sed -E` 和 `grep -E` 在所有 Linux 发行版均可使用，且语法最直观。
+
+---
 
 ## 日志格式
 
@@ -21,24 +37,22 @@ May 01 11:42:40 ubuntu-lwzx-154 sshd[2249288]: Accepted password for root from 5
 
 ---
 
-## 方法
+## 方法一：sed -E 扩展正则（推荐）
 
-### 方法一：sed 捕获组（推荐）
-
-最简洁，一行搞定，无需管道串联多个命令：
+ERE 语法，捕获组 `( )` 无需反斜杠转义，`\S+` 匹配连续非空白字符：
 
 ```bash
 journalctl -u ssh --no-pager \
-  | sed -n 's/.*Accepted password for \([^ ]*\) from \([^ ]*\).*/\1 \2/p' \
+  | sed -En 's/.*Accepted password for (\S+) from (\S+).*/\1 \2/p' \
   | sort -u
 ```
 
 **拆解：**
 
-- `sed -n` — 默认不打印，只有匹配成功才输出（靠末尾的 `p` 标志）
-- `\([^ ]*\)` — 捕获组，匹配连续非空格字符，即用户名
-- `\([^ ]*\)` — 第二个捕获组，匹配 IP（`from` 后的第一个非空格字段）
-- `\1 \2` — 替换为「用户名 空格 IP」格式输出
+- `sed -En` — `-E` 启用扩展正则，`-n` 抑制默认输出，末尾 `p` 仅打印匹配行
+- `(\S+)` — ERE 捕获组，匹配连续非空白字符（用户名）
+- `(\S+)` — 第二个捕获组，匹配 IP（`from` 后的第一个非空白字段）
+- `\1 \2` — 替换为「用户名 空格 IP」格式
 - `sort -u` — 排序并去重
 
 输出示例：
@@ -53,27 +67,40 @@ root 223.104.104.48
 root 58.213.84.194
 ```
 
-### 方法二：grep -oP + awk
+### 对比：BRE 写法（不推荐，仅作对照）
 
-适合对 PCRE 正则更熟悉的场景：
+```bash
+# 同样是 sed，默认 BRE 模式需要把括号全加上反斜杠
+sed -n 's/.*Accepted password for \([^ ]*\) from \([^ ]*\).*/\1 \2/p'
+#                            ^^   ^  ^        ^^   ^  ^
+#         BRE 的捕获组必须写成 \( 和 \)  ← 反直觉，容易写错
+```
+
+---
+
+## 方法二：grep -oE + awk
+
+用 `grep -E` 提取匹配段，再用 `awk` 取列：
 
 ```bash
 journalctl -u ssh --no-pager \
   | grep 'Accepted password' \
-  | grep -oP 'Accepted password for \S+ from \S+' \
+  | grep -oE 'Accepted password for [^ ]+ from [^ ]+' \
   | awk '{print $4,$6}' \
   | sort -u
 ```
 
 **拆解：**
 
-- `grep -oP` — `-o` 只输出匹配部分，`-P` 启用 PCRE 正则
-- `\S+` — 匹配任意非空白字符
+- `grep -oE` — `-o` 只输出匹配段，`-E` 启用扩展正则
+- `[^ ]+` — ERE 写法的非空白字符匹配（等价于 PCRE 的 `\S+`）
 - `awk '{print $4,$6}'` — 输出第 4（用户名）和第 6（IP）列
 
-### 方法三：纯 awk
+---
 
-无需 GNU grep 的 `-P` 选项，兼容性更好：
+## 方法三：纯 awk
+
+无需 `grep`，POSIX 兼容性最好：
 
 ```bash
 journalctl -u ssh --no-pager \
@@ -93,13 +120,15 @@ journalctl -u ssh --no-pager \
 - 遇到 `for` → 记录下一个字段为用户名 `u`
 - 遇到 `from` → 输出 `u` 和下一个字段（IP），然后 `break` 结束该行处理
 
-### 方法四：读取旧日志文件
+---
+
+## 方法四：读取旧日志文件
 
 如果 `journalctl` 只保留近期日志，可以从 `/var/log/auth.log*` 读取历史记录：
 
 ```bash
 zgrep 'Accepted password' /var/log/auth.log* \
-  | sed -n 's/.*Accepted password for \([^ ]*\) from \([^ ]*\).*/\1 \2/p' \
+  | sed -En 's/.*Accepted password for (\S+) from (\S+).*/\1 \2/p' \
   | sort -u
 ```
 
@@ -109,13 +138,15 @@ zgrep 'Accepted password' /var/log/auth.log* \
 
 ## 方法对比
 
-| 方法 | 工具 | 优点 | 缺点 |
-|------|------|------|------|
-| sed 捕获组 | `sed` | 一条命令，简洁高效 | 需要理解 sed 替换语法 |
-| grep -oP + awk | `grep` + `awk` | 正则直观 | 需要 GNU grep（`-P` 非 POSIX） |
-| 纯 awk | `awk` | POSIX 兼容，可移植性最好 | 代码稍长 |
+| 方法 | 工具 | 正则模式 | 优点 | 缺点 |
+|------|------|---------|------|------|
+| sed -E 捕获组 | `sed -E` | **ERE** | 一条命令，语法简洁直观 | 无 |
+| grep -oE + awk | `grep -E` + `awk` | ERE | POSIX 兼容，分步清晰 | 多一次管道 |
+| 纯 awk | `awk` | —（字段匹配） | POSIX 兼容，可移植性最好 | 代码稍长 |
 
-生产环境中推荐**方法一（sed）**，日常排查时**方法二（grep -oP）**更直观。
+**不使用 PCRE（`grep -P`）的原因：** `-P` 是 GNU grep 专属扩展，macOS/BSD 不兼容，且 ERE 完全够用，无需引入 Perl 语法。
+
+生产环境推荐**方法一（sed -E）**，它用 ERE 扩展正则、一行完成、所有 Linux 发行版均可用。
 
 ---
 
@@ -125,7 +156,7 @@ zgrep 'Accepted password' /var/log/auth.log* \
 
 ```bash
 journalctl -u ssh --no-pager \
-  | sed -n 's/.*Accepted password for \([^ ]*\) from \([^ ]*\).*/\1 \2/p' \
+  | sed -En 's/.*Accepted password for (\S+) from (\S+).*/\1 \2/p' \
   | sort -u \
   | awk '{cnt[$1]++} END {for(u in cnt) print cnt[u], u}' \
   | sort -rn
@@ -157,12 +188,3 @@ journalctl -u ssh --no-pager \
    - 禁用 root 登录 → `PermitRootLogin no`
    - 更换端口 → 非必要不暴露，推荐配合 `fail2ban` 使用
    - 配置 `fail2ban` → 自动封禁爆破 IP（另见《Ubuntu fail2ban 安装与配置指南》）
-
----
-
-## 参考
-
-- `man sshd_config` — SSH 服务端配置手册
-- `man journalctl` — systemd 日志查询工具
-- `man sed` — 流编辑器
-- 《Ubuntu fail2ban 安装与配置指南》— 同目录
