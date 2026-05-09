@@ -144,7 +144,9 @@ linux-modules-5.15.0-25-generic
 
 ### 3.3 通过 unattended-upgrades 禁用自动内核更新（可选）
 
-对于无人值守的服务器，安全自动更新（`unattended-upgrades`）是更隐蔽的内核升级来源。编辑配置文件：
+> **与 3.2 的关系**：`apt-mark hold` 禁止包通过任何 apt 途径升级（包括 `unattended-upgrades`），因此 **3.2 完成后，3.3 在功能上是冗余的**。本节作为纵深防御（Defense in Depth）的补充层——当有人误执行 `apt-mark unhold` 解锁内核包时，`unattended-upgrades` 黑名单仍能兜底阻止自动升级。
+
+编辑配置文件：
 
 ```bash
 sudo vim /etc/apt/apt.conf.d/50unattended-upgrades
@@ -239,6 +241,13 @@ sudo vim /etc/default/grub
 GRUB_DEFAULT="Advanced options for Ubuntu>Ubuntu, with Linux 5.15.0-25-generic"
 ```
 
+也可通过 `sed` 精确替换，避免手动编辑出错（**幂等**，多次执行结果相同）：
+
+```bash
+# 匹配注释或未注释的 GRUB_DEFAULT 行，统一替换为目标值
+sudo sed -i -E 's/^#?GRUB_DEFAULT=.*/GRUB_DEFAULT="Advanced options for Ubuntu>Ubuntu, with Linux 5.15.0-25-generic"/' /etc/default/grub
+```
+
 > **格式说明**：`>` 左侧是子菜单名（`submenu` 的值），右侧是目标菜单项名（`menuentry` 的值）。注意 `>` 前后不要有多余空格。
 
 ```bash
@@ -267,6 +276,12 @@ sudo grep -A100 "submenu\|menuentry" /boot/grub/grub.cfg | grep -E "menuentry|su
 
 ```
 GRUB_DEFAULT="1>2"
+```
+
+同样可用 `sed` 幂等替换：
+
+```bash
+sudo sed -i -E 's/^#?GRUB_DEFAULT=.*/GRUB_DEFAULT="1>2"/' /etc/default/grub
 ```
 
 > **提示**：数字索引在安装/卸载内核后会变化，推荐使用方法一（名称匹配，更稳定）。
