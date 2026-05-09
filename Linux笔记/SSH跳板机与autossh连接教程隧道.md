@@ -1,7 +1,17 @@
 ## SSH 跳板机完全教程：`-J` 参数与 autossh 持久隧道
 
 先用一张图说清楚整体架构，再逐层讲解。
-![](assets/SSH跳板机与autossh连接教程隧道/file-20260506114602613.png)
+
+```mermaid
+flowchart LR
+    A["hostA（本地）<br>发起连接的机器"]
+    B["hostB（跳板）<br>公网可访问"]
+    C["hostC（目标）<br>仅内网可达"]
+
+    A -->|SSH #1 :22| B
+    B -.->|SSH #2 穿透 :22| C
+    A -. "逻辑隧道 -J" .-> C
+```
 ---
 
 ### 一、前置条件
