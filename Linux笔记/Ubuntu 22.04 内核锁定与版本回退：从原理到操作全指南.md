@@ -245,7 +245,7 @@ GRUB_DEFAULT="Advanced options for Ubuntu>Ubuntu, with Linux 5.15.0-25-generic"
 
 ```bash
 # 匹配注释或未注释的 GRUB_DEFAULT 行，统一替换为目标值
-sudo sed -i -E 's/^#?GRUB_DEFAULT=.*/GRUB_DEFAULT="Advanced options for Ubuntu>Ubuntu, with Linux 5.15.0-25-generic"/' /etc/default/grub
+sudo sed -i 's/^GRUB_DEFAULT=.*/GRUB_DEFAULT="Advanced options for Ubuntu>Ubuntu, with Linux 5.15.0-25-generic"/' /etc/default/grub
 ```
 
 > **格式说明**：`>` 左侧是子菜单名（`submenu` 的值），右侧是目标菜单项名（`menuentry` 的值）。注意 `>` 前后不要有多余空格。
@@ -317,15 +317,19 @@ sudo update-grub
 刚安装完 Ubuntu 22.04 服务器，希望以初始内核 `5.15.0-25-generic` 作为长期运行版本：
 
 ```bash
+# 锁定具体版本内核包
 sudo apt-mark hold linux-image-5.15.0-25-generic
 sudo apt-mark hold linux-headers-5.15.0-25-generic
 sudo apt-mark hold linux-modules-5.15.0-25-generic
-sudo apt-mark hold linux-image-generic linux-headers-generic
+# 锁定元包，阻断新内核拉取路径（包括 HWE 栈）
+sudo apt-mark hold linux-image-generic
+sudo apt-mark hold linux-headers-generic
+sudo apt-mark hold linux-generic-hwe-22.04
 ```
 
 #### 场景 2：安全更新后发现内核被升级，需要回退
 
-凌晨自动更新拉取了 `5.15.0-113-generic`，业务出现异常。临时回退步骤：
+凌晨自动更新拉取了 `5.15.0-171-generic`，业务出现异常。临时回退步骤：
 
 ```bash
 sudo vim /etc/default/grub
@@ -355,10 +359,14 @@ sudo apt autoremove --purge   # 清理多余内核
 KERNEL=$(uname -r)
 echo "当前内核: $KERNEL"
 
+# 锁定具体版本内核包
 sudo apt-mark hold linux-image-$KERNEL
 sudo apt-mark hold linux-headers-$KERNEL
 sudo apt-mark hold linux-modules-$KERNEL
-sudo apt-mark hold linux-image-generic linux-headers-generic
+# 锁定元包，阻断新内核拉取路径（包括 HWE 栈）
+sudo apt-mark hold linux-image-generic
+sudo apt-mark hold linux-headers-generic
+sudo apt-mark hold linux-generic-hwe-22.04
 
 echo "锁定结果："
 apt-mark showhold | grep linux
@@ -372,7 +380,7 @@ apt-mark showhold | grep linux
 
 #### 2. 始终同时锁定具体版本包和元包
 
-仅锁 `linux-image-5.15.0-25-generic` 而不锁 `linux-image-generic` 是常见的操作失误。元包会绕过具体包的 hold 标记，继续拉取新内核。
+仅锁 `linux-image-5.15.0-25-generic` 而不锁元包是常见的操作失误。三个元包——`linux-image-generic`、`linux-headers-generic`、`linux-generic-hwe-22.04`——都会绕过具体包的 hold 标记，继续拉取新内核。
 
 #### 3. 定期手动检查 hold 状态
 
