@@ -127,6 +127,24 @@ grep 'PermitUserEnvironment' /etc/ssh/sshd_config
 # 若输出 "PermitUserEnvironment yes" 且 ~/.ssh/environment 存在 — 已确认被利用
 ```
 
+> **进阶排查：bash 初始化链完整性。** `alias` 为空、`ls` 无色的另一常见原因不是恶意劫持，而是 bash 初始化链被截断。Ubuntu 的 login shell 加载顺序为：
+>
+> ```
+> /etc/profile → ~/.bash_profile（优先）或 ~/.profile（fallback）→ ~/.bashrc
+> ```
+>
+> **一旦 `~/.bash_profile` 存在（哪怕只有一行），`~/.profile` 会被跳过。** 如果 `.bash_profile` 不 source `.bashrc`，所有 alias 和 color 配置丢失。
+>
+> ```bash
+> # 诊断 bash 初始化链
+> echo "--- .bash_profile ---"; cat ~/.bash_profile 2>/dev/null || echo "不存在"
+> echo "--- .profile ---";       cat ~/.profile 2>/dev/null || echo "不存在"
+> echo "--- .bashrc 尾部 ---";   tail -5 ~/.bashrc 2>/dev/null
+>
+> # 修复：在 .bash_profile 末尾追加 .bashrc 加载
+> echo 'if [ -f ~/.bashrc ]; then . ~/.bashrc; fi' >> ~/.bash_profile
+> ```
+
 ---
 
 ## 2. 登录审计
@@ -490,7 +508,50 @@ grep '^PermitUserEnvironment' /etc/ssh/sshd_config
 
 **可疑信号：** `rc` 中包含 `export LD_PRELOAD=...`；`environment` 中设置了指向 `/tmp/` 下 `.so` 文件的变量；`PermitUserEnvironment` 被改为 `yes`。
 
----
+### 5.6 PAM session 钩子检测
+
+攻击者获取 root 后，常在 `/etc/pam.d/sshd` 的 session 阶段植入 `pam_exec.so`，使每次 SSH 登录都执行恶意程序——这是比 `~/.ssh/rc` 更隐蔽的持久化，因为它对用户完全透明。
+
+```bash
+# 搜索所有 PAM session 阶段中调用的外部程序
+grep -n 'pam_exec' /etc/pam.d/sshd
+
+# 搜索 PAM 配置中所有执行的外部命令/脚本
+grep -rn 'pam_exec\|/usr/bin\|/bin/' /etc/pam.d/sshd | grep -v '^#'
+
+# 检查 user_readenv 是否开启（读取 ~/.pam_environment）
+grep 'user_readenv' /etc/pam.d/sshd
+```
+
+**排查清单：**
+
+| 排查项 | 命令 | 攻击者的利用方式 |
+|--------|------|----------------|
+| PAM 中的外部执行 | `grep -rn 'pam_exec' /etc/pam.d/` | 植入 `/usr/bin/xxx` 在每次登录/注销时执行 |
+| `~/.pam_environment` | `cat ~/.pam_environment` | 配合 `user_readenv=1` 注入环境变量 |
+| PAM sshd session 栈完整性 | `grep '^session' /etc/pam.d/sshd` | 对比同版本 Ubuntu 默认配置找差异行 |
+| 全局 PAM common 文件 | `md5sum /etc/pam.d/common-*` 与正常机器对比 | 通过 `@include common-session` 间接植入 |
+
+**真实案例中的攻击样本（已脱敏）：**
+
+```
+session optional pam_exec.so quiet /usr/bin/watching
+```
+
+`/usr/bin/watching` 是一个 990KB 的静态编译 ELF，内嵌 glibc 并引用了 `LD_PRELOAD`、`/proc/self/maps`、`execve` 等关键接口。它在 PAM session 阶段执行，可对当前 shell 进程注入代码。
+
+**修复：**
+
+```bash
+# 从 PAM sshd 中移除恶意行
+sed -i '/\/usr\/bin\/watching/d' /etc/pam.d/sshd
+# 删除恶意二进制
+rm -f /usr/bin/watching
+# 确认清理
+grep -n 'watching' /etc/pam.d/sshd   # 应无输出
+```
+
+
 
 ## 6. 文件与隐藏目录
 
@@ -1090,7 +1151,90 @@ sed -i 's/^#*PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config
 systemctl restart sshd
 ```
 
-### 11.7 未处理时的持续风险
+### 11.7 第五阶段：PAM 会话钩子（深层持久化）
+
+清理完文件、crontab、authorized_keys 后，新建 SSH 连接发现 shell 仍被污染——这是最让人崩溃的时刻。此时发现了一条被遗漏的 PAM 配置行：
+
+```
+session optional pam_exec.so quiet /usr/bin/watching
+```
+
+**`/usr/bin/watching` 分析：**
+
+```bash
+file /usr/bin/watching
+# ELF 64-bit LSB executable, statically linked, not stripped, 990KB
+
+# 关键字符串特征
+strings /usr/bin/watching | grep -E 'LD_PRELOAD|/proc/self|execve|dlopen'
+# 输出包含 LD_PRELOAD、/proc/self/maps、__execve 等，证明它有进程注入能力
+```
+
+此文件在**每次 SSH 登录和退出时**由 PAM session 栈触发，是攻击者用于在新 shell 中持续注入代码的入口。
+
+**移除：**
+
+```bash
+sed -i '/\/usr\/bin\/watching/d' /etc/pam.d/sshd
+rm -f /usr/bin/watching
+```
+
+移除后重连 SSH，shell 仍旧污染——说明还有其他污染源，继续排查。
+
+### 11.8 第六阶段：.bash_profile 截断（误判解除）
+
+重新排查后发现污染的 shell 中 `alias` 完全为空、`LS_COLORS` 未设置，但通过 `/bin/bash` 启动的子 shell 一切正常。
+
+**根因：** `/root/.bash_profile` 只有一行：
+
+```bash
+ulimit -HSn 65535
+```
+
+Ubuntu 的 login shell 加载顺序：`/etc/profile` → `~/.bash_profile`（如果存在则**跳过** `~/.profile`）→ `.bashrc`（需手动 source）。
+
+`.bash_profile` 存在但不 source `.bashrc`，导致所有 alias 和 color 配置丢失。**这不是攻击行为——文件创建于入侵之前，是运维部署时遗留的 ulimit 配置。**
+
+**诊断命令：**
+
+```bash
+# 判断是恶意劫持还是 init 链截断
+echo "=== .bash_profile ===" && cat ~/.bash_profile
+echo "=== 尾行检查 ===" && tail -3 ~/.bashrc
+# 如果 .bash_profile 未调用 .bashrc → init 链截断
+
+# 修复
+echo 'if [ -f ~/.bashrc ]; then . ~/.bashrc; fi' >> ~/.bash_profile
+```
+
+### 11.9 完整归因表
+
+| 现象 | 阶段 | 真实原因 | 性质 |
+|------|------|---------|------|
+| SSH 密码爆破成功 | 初始入侵 | root 弱密码 + 22 端口暴露 | **真实攻击** |
+| CPU 100% / 进程名 kauditd0 | 挖矿 | 伪装内核线程的 Miner | **真实攻击** |
+| `/tmp/.kswapd00` 存在 | 挖矿 | Miner 主程序（2.2MB ELF） | **真实攻击** |
+| `~/.configrc7/a/kswapd00` | 持久化 | Miner 备用副本 + 更新器 | **真实攻击** |
+| 6 个 crontab 条目 | 持久化 | 多层定时复活机制 | **真实攻击** |
+| `authorized_keys` 有 hostile key | 后门 | 攻击者公钥 "mdrfckr" | **真实攻击** |
+| `.ssh` 目录被 `chattr +ia` 锁死 | 反清理 | 阻止删除 hostile key | **真实攻击** |
+| 旧 session 中文件"不可见" | 2 阶段 | 旧 sshd (deleted) 内存级 getdents64 hook | **真实攻击** |
+| `/usr/bin/watching` + PAM 钩子 | 2 阶段 | 每次 SSH 登录执行恶意 ELF | **真实攻击** |
+| **新 session 中 alias 丢失** | **3 阶段** | **`.bash_profile` 截断 init 链（运维残留）** | **误判** |
+
+### 11.10 经验总结
+
+**1. 攻击痕迹和运维残留可以同时存在，不要假设所有异常来自同一来源。**
+
+旧 session 的文件隐藏是真实攻击（内存 hook），新 session 的 alias 丢失是运维残留（`.bash_profile` 截断 init 链）。两者现象相似（都是 `ls` 无色），但根因完全不同。诊断时用 `/bin/bash` 子 shell 做对照是最快的区分手段：如果子 shell 恢复正常，问题在 init 链而非内存注入。
+
+**2. 排查顺序决定效率。** 先查 env / alias / LD_PRELOAD（30 秒）→ 再查 bash 初始化链（1 分钟）→ 再查 PAM（1 分钟）→ 最后查内存级 hook（5 分钟）。按这个顺序，大部分情况在前两步就能定位。
+
+**3. PAM session 栈是攻击者最爱但管理员最忽略的攻击面。** 每次排查都应执行 `grep -rn 'pam_exec\|/usr/bin\|/bin/' /etc/pam.d/sshd`。
+
+**4. 被 root 入侵过的机器，唯一安全的选择仍是重装系统。** 即使清理了所有已知文件，攻击者可能留下了未知的内核模块、Firmware rootkit 或被 patch 的系统二进制。
+
+### 清理后的持续风险
 
 如果仅删除文件但不加固 SSH，攻击者在以下时机可以重新入侵：
 
