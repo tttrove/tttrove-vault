@@ -54,25 +54,24 @@ checkinstall --install=no --pkgname=openssh-local
 软件包将用下面的值来创建：
 
 0 -  Maintainer: [ root@shiyaofei-virtual-machine ]
-1 -  Summary: [ Package created with checkinstall 1.6.3 ]
+1 -  Summary: [ Package created with checkinstall 1.6.2 ]
 2 -  Name:    [ openssh-local ]
 3 -  Version: [ 10.3p1 ]
 4 -  Release: [ 1 ]
 5 -  License: [ GPL ]
 6 -  Group:   [ checkinstall ]
 7 -  Architecture: [ amd64 ]
-8 -  Source location: [ openssh-10.2p1 ]
+8 -  Source location: [ openssh-10.3p1 ]
 9 -  Alternate source location: [  ]
 10 - Requires: [  ]
-11 - Recommends: [  ]
-12 - Suggests: [  ]
-13 - Provides: [ openssh ]
-14 - Conflicts: [  ]
-15 - Replaces: [  ]
+11 - Provides: [ openssh-local ]
+12 - Conflicts: [  ]
+13 - Replaces: [  ]
+
 ```
 
 最终会生成：  
-`openssh-local_10.2p1-1_amd64.deb`
+`openssh-local_10.3p1-1_amd64.deb`
 
 ---
 
@@ -82,8 +81,8 @@ checkinstall --install=no --pkgname=openssh-local
 解压deb包，修改`DEBIAN/` 目录下的脚本文件。
 
 ```bash
-dpkg-deb -R openssh-local_10.2p1-1_amd64.deb tmp/
-cd tmp
+dpkg-deb -R openssh-local_10.3p1-1_amd64.deb ssh-deb-pack/
+cd ssh-deb-pack/
 ```
 
 
