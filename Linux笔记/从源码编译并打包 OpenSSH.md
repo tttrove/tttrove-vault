@@ -139,6 +139,7 @@ set -e
 # postinst：在文件安装完成后执行。用于修改 systemd 配置并启动服务。
 
 SERVICE_FILE="/lib/systemd/system/ssh.service"
+SSHD_CONF="/etc/ssh/sshd_config"
 
 # 修改 systemd 服务文件路径，指向 /usr/local/sbin/sshd
 if [ -f "$SERVICE_FILE" ]; then
@@ -150,6 +151,41 @@ fi
 mkdir -p /var/empty
 chown root:root /var/empty
 chmod 755 /var/empty
+
+# ============================================================
+# 修改 sshd_config
+# ============================================================
+
+# 备份
+cp /etc/pam.d/sshd /etc/pam.d/sshd.before
+cp "$SSHD_CONF" "${SSHD_CONF}.before"
+
+# 清理旧算法配置
+sed -i '/^[[:space:]]*KexAlgorithms/d' "$SSHD_CONF"
+sed -i '/^[[:space:]]*GSSAPIKexAlgorithms/d' "$SSHD_CONF"
+sed -i '/^[[:space:]]*HostKeyAlgorithms/d' "$SSHD_CONF"
+
+# PermitRootLogin yes（幂等）
+if ! grep -Eq '^[[:space:]]*PermitRootLogin[[:space:]]+yes\b' "$SSHD_CONF"; then
+    echo "PermitRootLogin yes" >> "$SSHD_CONF"
+fi
+
+# UsePAM yes（存在则替换，不存在则追加）
+if grep -Eq '^[[:space:]]*#?[[:space:]]*UsePAM' "$SSHD_CONF"; then
+    sed -i 's/^[[:space:]]*#\?[[:space:]]*UsePAM.*/UsePAM yes/' "$SSHD_CONF"
+else
+    echo "UsePAM yes" >> "$SSHD_CONF"
+fi
+
+# 恢复 pam
+/bin/cp /etc/pam.d/sshd.before /etc/pam.d/sshd
+
+# HostKeyAlgorithms +ssh-rsa（幂等）
+if ! grep -Eq '^[[:space:]]*HostKeyAlgorithms[[:space:]]+\+ssh-rsa\b' "$SSHD_CONF"; then
+    echo "HostKeyAlgorithms +ssh-rsa" >> "$SSHD_CONF"
+fi
+
+# ============================================================
 
 # 重新加载 systemd 并启动新 ssh 服务
 systemctl daemon-reload || true
@@ -205,31 +241,34 @@ chmod 755 DEBIAN/{preinst,postinst,prerm,postrm}
 
 ## 📦 八、重新打包deb文件
 ```bash
-dpkg-deb -b tmp/ openssh-local_10.2p1-1_amd64.deb
+dpkg-deb -b ssh-deb-pack/ openssh-local_10.3p1-1_amd64.deb
 ```
 
 ---
 
 ## 🚀 九、安装自定义 OpenSSH 包
 ```bash
-dpkg -i openssh-local_10.2p1-1_amd64.deb
+dpkg -i openssh-local_10.3p1-1_amd64.deb
 ```
 
 **安装输出示例：**
 
 ```plain
-root@shiyaofei-virtual-machine:~# dpkg -i openssh-local_10.2p1-1_amd64.deb 
-正在选中未选择的软件包 openssh-local。
-(正在读取数据库 ... 系统当前共安装有 233372 个文件和目录。)
-准备解压 openssh-local_10.2p1-1_amd64.deb  ...
+# dpkg -i openssh-local_10.3p1-1_amd64.deb 
+Selecting previously unselected package openssh-local.
+(Reading database ... 132556 files and directories currently installed.)
+Preparing to unpack openssh-local_10.3p1-1_amd64.deb ...
+==> 系统版本检查通过：Ubuntu 18.04.6 LTS
 ==> 停止原有 SSH 服务
-正在解压 openssh-local (10.2p1-1) ...
-正在设置 openssh-local (10.2p1-1) ...
+Unpacking openssh-local (10.3p1-1) ...
+Setting up openssh-local (10.3p1-1) ...
 ==> 修改 systemd 服务文件以使用 /usr/local/sbin/sshd
 Synchronizing state of ssh.service with SysV service script with /lib/systemd/systemd-sysv-install.
 Executing: /lib/systemd/systemd-sysv-install enable ssh
-==> OpenSSH 10.2p1 (local) 已启动
-正在处理用于 man-db (2.10.2-1) 的触发器 ...
+==> OpenSSH 10.3p1 (local) 已启动
+Processing triggers for man-db (2.8.3-2ubuntu0.1) ...
+(base) root@jianrong231:/mnt# 
+
 ```
 
 ---
