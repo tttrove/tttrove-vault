@@ -283,11 +283,11 @@ dpkg -r openssh-local
 ```plain
 root@shiyaofei-virtual-machine:~# dpkg --remove openssh-local 
 (正在读取数据库 ... 系统当前共安装有 233418 个文件和目录。)
-正在卸载 openssh-local (10.2p1-1) ...
+正在卸载 openssh-local (10.3p1-1) ...
 ==> 停止 openssh-local 服务
 ==> 恢复 systemd 服务文件使用 /usr/sbin/sshd
 ==> 已恢复系统默认 OpenSSH 服务
-正在处理用于 man-db (2.10.2-1) 的触发器 ...
+正在处理用于 man-db (2.10.3-1) 的触发器 ...
 ```
 
 ---
@@ -310,7 +310,7 @@ which sshd
 # 输出应为 /usr/local/sbin/sshd
 
 sshd -V
-# OpenSSH_10.2p1, OpenSSL ...
+# OpenSSH_10.3p1, OpenSSL ...
 ```
 
 ---
