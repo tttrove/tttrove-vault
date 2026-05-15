@@ -156,7 +156,7 @@ systemctl daemon-reload || true
 systemctl enable ssh || true
 systemctl restart ssh || true
 
-echo "==> OpenSSH 10.2p1 (local) 已启动"
+echo "==> OpenSSH 10.3p1 (local) 已启动"
 exit 0
 ```
 
