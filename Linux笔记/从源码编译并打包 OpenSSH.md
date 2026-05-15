@@ -13,9 +13,9 @@ apt install -y build-essential libssl-dev zlib1g-dev libpam0g-dev checkinstall
 ## 📁 二、下载并解压源码
 ```bash
 cd /mnt
-wget https://mirrors.aliyun.com/pub/OpenBSD/OpenSSH/portable/openssh-10.2p1.tar.gz
-tar -zxf openssh-10.2p1.tar.gz
-cd openssh-10.2p1
+wget https://mirrors.aliyun.com/pub/OpenBSD/OpenSSH/portable/openssh-10.3p1.tar.gz
+tar -zxf openssh-10.3p1.tar.gz
+cd openssh-10.3p1
 ```
 
 ---
@@ -56,7 +56,7 @@ checkinstall --install=no --pkgname=openssh-local
 0 -  Maintainer: [ root@shiyaofei-virtual-machine ]
 1 -  Summary: [ Package created with checkinstall 1.6.3 ]
 2 -  Name:    [ openssh-local ]
-3 -  Version: [ 10.2p1 ]
+3 -  Version: [ 10.3p1 ]
 4 -  Release: [ 1 ]
 5 -  License: [ GPL ]
 6 -  Group:   [ checkinstall ]
@@ -98,12 +98,38 @@ tmp
     └── share
 ```
 
-### 1️⃣（安装前执行）
+### 1️⃣`DEBIAN/preinst`（安装前执行）
 ```bash
 #!/bin/bash
 set -e
+
+# ============================================================
+# 检查目标系统是否为 Ubuntu 18.04
+# ============================================================
+if [ -f /etc/os-release ]; then
+    . /etc/os-release
+    DISTRO_ID="${ID}"
+    DISTRO_VERSION="${VERSION_ID}"
+else
+    echo "ERROR: 无法读取 /etc/os-release，无法确认系统版本" >&2
+    exit 1
+fi
+
+if [ "${DISTRO_ID}" != "ubuntu" ] || [ "${DISTRO_VERSION}" != "18.04" ]; then
+    echo "============================================================" >&2
+    echo "ERROR: 此软件包仅支持 Ubuntu 18.04 (Bionic Beaver)" >&2
+    echo "       当前系统为: ${PRETTY_NAME}" >&2
+    echo "============================================================" >&2
+    exit 1
+fi
+
+# ============================================================
+# 停止原有 SSH 服务
+# ============================================================
+echo "==> 系统版本检查通过：${PRETTY_NAME}"
 echo "==> 停止原有 SSH 服务"
 systemctl stop ssh || true
+
 exit 0
 ```
 
