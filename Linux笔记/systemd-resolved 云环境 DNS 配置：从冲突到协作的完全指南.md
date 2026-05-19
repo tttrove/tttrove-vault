@@ -169,11 +169,11 @@ ls -l /etc/resolv.conf
 # 如果指向 stub，跳过；否则执行：
 sudo ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
 
-# 配置公共 DNS
-sudo tee /etc/systemd/resolved.conf <<EOF
-[Resolve]
-DNS=223.5.5.5 119.29.29.29
-EOF
+# 配置公共 DNS（仅修改 DNS= 这一行，不影响其他配置）
+sudo sed -i 's/^#DNS=.*/DNS=223.5.5.5 119.29.29.29/' /etc/systemd/resolved.conf
+
+# 验证修改结果
+grep DNS /etc/systemd/resolved.conf
 
 sudo systemctl restart systemd-resolved
 ```
