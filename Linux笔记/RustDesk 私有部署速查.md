@@ -1,230 +1,539 @@
 ---
-
-## title: RustDesk 私有部署速查：Docker + Nginx + API 三件套 tags: [RustDesk, Docker, Nginx, 腾讯云, 自托管, 远程桌面] created: 2026-06-21
+title: RustDesk 私有部署速查：Docker + Nginx + API 三件套
+tags: [RustDesk, Docker, Nginx, 腾讯云, 自托管, 远程桌面]
+created: 2026-06-21
+---
 
 # RustDesk 私有部署速查：Docker + Nginx + API 三件套
 
-## 1. 引言
+在远程访问多台电脑时，RustDesk OSS 虽然开源免费，但缺少设备管理界面，只能记忆数字设备 ID（如 `1426193003`）。而 RustDesk Pro 需要付费，TeamViewer 又依赖国外 SaaS。
 
-商业版 RustDesk 中继有流量/隐私顾虑，公网直连又不稳定。本方案用一体化镜像 `rustdesk-server-s6`（hbbs+hbbr+API+Web）配合 Nginx 反代 HTTPS，在腾讯云轻量服务器上搭出一套可控、可审计、带账号体系的私有远程桌面服务，适合个人/小团队长期自托管。
+**本文提供 RustDesk OSS + 社区 API 控制台的快速部署方案**，30 分钟内跑通：Web 管理界面 + 设备别名 + HTTPS + 地址簿同步，实现 TeamViewer 体验的自托管版本。
 
-## 2. 核心架构
+核心优势：
 
-单容器内集成四个组件：**hbbs**（ID/信令服务器，负责设备注册与打洞）、**hbbr**（中继服务器，NAT 穿透失败时转发流量）、**API**（账号、设备、地址簿管理后端）、**Web Admin**（管理控制台前端）。容器使用 `network_mode: host` 直接复用主机网络栈，省去端口映射的麻烦。Nginx 监听 443，做 TLS 终止后反代到容器内部的 21114 端口，对外只暴露标准 HTTPS 入口，API/Web/信令共用同一域名。
+- **设备管理**：Web 控制台查看设备列表、在线状态、分组管理
+- **别名代替 ID**：用 `HOME-PC` / `DELL-LAPTOP` 代替数字 ID
+- **地址簿同步**：客户端登录后自动同步，跨设备共享
+- **HTTPS 安全**：Let's Encrypt 证书自动续期
+- **审计日志**：登录、连接、文件传输全记录
 
-## 3. DNS 与安全组
+本文将从架构、DNS、部署、客户端配置、故障排查等方面，沉淀这次实战的完整知识。
 
-|项目|配置|
-|---|---|
-|域名|`rd.tttrove.qzz.io`|
-|DNS 记录|A 记录 → 服务器公网 IPv4；AAAA 记录 → 服务器公网 IPv6|
-|域名隔离|`rd.tttrove.qzz.io` 专用 RustDesk；`linux.tttrove.qzz.io` 留给 SSH，避免混用|
+---
 
-腾讯云安全组放行端口：
+## 目录
 
-|端口|协议|用途|
-|---|---|---|
-|80|TCP|HTTP，证书校验/跳转|
-|443|TCP4/TCP6|HTTPS，Web/API/信令统一入口|
-|21115-21119|TCP4/TCP6|hbbs/hbbr 信令与中继|
-|21116|UDP4/UDP6|hbbs UDP 打洞|
+- [1. 核心架构](#1-核心架构)
+- [2. DNS 与安全组](#2-dns-与安全组)
+  - [2.1 DNS 记录](#21-dns-记录)
+  - [2.2 腾讯云安全组](#22-腾讯云安全组)
+- [3. 目录结构](#3-目录结构)
+- [4. Docker Compose 部署](#4-docker-compose-部署)
+- [5. Nginx + HTTPS](#5-nginx--https)
+  - [5.1 安装 nginx.org 官方版](#51-安装-nginxorg-官方版)
+  - [5.2 签发 Let's Encrypt 证书](#52-签发-lets-encrypt-证书)
+  - [5.3 Nginx 反向代理配置](#53-nginx-反向代理配置)
+- [6. Windows 客户端配置](#6-windows-客户端配置)
+  - [6.1 GUI 手动配置](#61-gui-手动配置)
+  - [6.2 PowerShell CLI 批量配置](#62-powershell-cli-批量配置)
+  - [6.3 验证配置](#63-验证配置)
+- [7. 控制台使用](#7-控制台使用)
+- [8. 故障速查表](#8-故障速查表)
+- [9. 长期维护](#9-长期维护)
+- [10. 总结](#10-总结)
+- [11. 参考资料](#11-参考资料)
 
-> ⚠️ 坑2：腾讯云安全组的 IPv4 443 规则有被自动清理的情况，建议定期检查，并用 iptables 做兜底（见第 9 节）。
+---
 
-## 4. 目录结构
+## 1. 核心架构
 
-```bash
-# 部署根目录：/home/ubuntu/Apps/rustdesk
-ubuntu@VM-0-6-ubuntu:~/Apps/rustdesk$ tree
-.
-├── api-data
-│   └── rustdeskapi.db          # API 服务账号/设备数据库
-├── compose.yml                 # Docker Compose 主配置
-├── compose.yml.bak.20260621-141822  # 修改前自动备份，习惯性留痕
-└── data
-    ├── db_v2.sqlite3            # hbbs 设备注册数据库
-    ├── db_v2.sqlite3-shm
-    ├── db_v2.sqlite3-wal
-    ├── id_ed25519                # 服务器私钥，权限务必收紧
-    └── id_ed25519.pub             # 服务器公钥，客户端配置需要
-
-3 directories, 8 files
+```
+公网用户 (IPv4/IPv6)
+    ↓
+腾讯云 Ubuntu 24.04（非 root 用户 ubuntu）
+├─ Nginx 1.30 (80/443 → 21114)
+│   └─ Let's Encrypt 证书（自动续期）
+└─ Docker: lejianwen/rustdesk-server-s6
+    ├─ hbbs + hbbr (21115-21119)
+    └─ API + Web Admin (21114)
 ```
 
-## 5. Docker Compose 速查
+**组件清单**：
+
+- **服务端**：`lejianwen/rustdesk-server-s6`（fork 增强版，单容器含 hbbs + hbbr + API + Web Admin）
+- **反向代理**：nginx.org 官方版 + certbot
+- **域名策略**：`rd.tttrove.qzz.io` 专给 RustDesk，`linux.tttrove.qzz.io` 留给 SSH
+- **部署用户**：`ubuntu`（非 root，sudo 提权）
+- **部署路径**：`/home/ubuntu/Apps/rustdesk`
+
+---
+
+## 2. DNS 与安全组
+
+### 2.1 DNS 记录
+
+在腾讯云 DNS 解析中添加两条记录：
+
+| 主机记录 | 记录类型 | 记录值 | TTL |
+|---------|---------|-------|-----|
+| `rd` | A | 服务器 IPv4 | 600 |
+| `rd` | AAAA | 服务器 IPv6 | 600 |
+
+> **提示**：双栈记录确保 IPv4-only 和 IPv6-only 客户端都能访问。
+
+### 2.2 腾讯云安全组
+
+入站规则需放行以下端口（TCP4/TCP6 + UDP4/UDP6）：
+
+| 端口 | 协议 | 用途 |
+|------|------|------|
+| 80 | TCP4/TCP6 | HTTP→HTTPS 跳转 + 证书续期 |
+| 443 | TCP4/TCP6 | Web Admin / API HTTPS |
+| 21115 | TCP4/TCP6 | hbbs NAT 测试 |
+| 21116 | TCP4/TCP6 + UDP4/UDP6 | hbbs ID 注册（UDP 必须放行） |
+| 21117 | TCP4/TCP6 | hbbr 中继 |
+| 21118 | TCP4/TCP6 | hbbs WebSocket |
+| 21119 | TCP4/TCP6 | hbbr WebSocket |
+
+> **重要**：`21116` 必须同时放行 TCP 和 UDP，否则客户端无法注册 ID。`21114` 不需要对公网开放（仅 Nginx 本机反代）。
+
+---
+
+## 3. 目录结构
+
+```
+/home/ubuntu/Apps/rustdesk
+├── api-data/
+│   └── rustdeskapi.db          # Web 控制台数据库（用户、设备、地址簿）
+├── compose.yml                 # Docker Compose 配置
+├── compose.yml.bak.*           # 配置备份
+└── data/
+    ├── db_v2.sqlite3           # hbbs 设备注册数据库
+    ├── db_v2.sqlite3-shm
+    ├── db_v2.sqlite3-wal
+    ├── id_ed25519              # 服务端身份私钥（核心机密）
+    └── id_ed25519.pub          # 服务端公钥（客户端 Key 来源）
+```
+
+**关键文件说明**：
+
+- `data/id_ed25519`：RustDesk 服务端身份私钥，**决定服务器身份**，泄露后他人可伪造你的服务器
+- `data/id_ed25519.pub`：公钥，客户端配置中的 `Key` 字段填此内容
+- `api-data/rustdeskapi.db`：Web 控制台 SQLite 数据库，包含用户、设备、地址簿、审计日志
+
+---
+
+## 4. Docker Compose 部署
+
+### 4.1 备份旧部署（如已部署 RustDesk）
+
+```bash
+# 保留 id_ed25519 密钥对（客户端 Key 不变，无需重新配置）
+sudo cp -a /home/ubuntu/Apps/rustdesk/data /home/ubuntu/rustdesk-backup-$(date +%Y%m%d)
+```
+
+### 4.2 创建 compose.yml
 
 ```yaml
-# compose.yml
+# /home/ubuntu/Apps/rustdesk/compose.yml
 services:
   rustdesk:
     container_name: rustdesk
     image: lejianwen/rustdesk-server-s6:latest
     environment:
-      - RELAY=rd.tttrove.qzz.io              # 中继服务器域名
-      - ENCRYPTED_ONLY=0                     # 先跑通再加固，见坑1
-      - MUST_LOGIN=N                         # 先跑通再加固，见坑1
+      - RELAY=rd.tttrove.qzz.io
+      - ENCRYPTED_ONLY=0              # 兼容模式，生产环境改 1
+      - MUST_LOGIN=N                  # 客户端全配好后改 Y
       - TZ=Asia/Shanghai
       - RUSTDESK_API_LANG=zh-CN
-      - RUSTDESK_API_APP_REGISTER=false      # 关闭自助注册，账号由管理员创建
-      - RUSTDESK_API_APP_SHOW_SWAGGER=0      # 不暴露 API 文档
-      - RUSTDESK_API_APP_CAPTCHA_THRESHOLD=3
-      - RUSTDESK_API_APP_BAN_THRESHOLD=5
-      - RUSTDESK_API_GIN_TRUST_PROXY=127.0.0.1   # 信任 Nginx 反代来源
+      - RUSTDESK_API_APP_REGISTER=false   # 禁止公开注册
+      - RUSTDESK_API_APP_SHOW_SWAGGER=0   # 隐藏 API 文档
       - RUSTDESK_API_RUSTDESK_ID_SERVER=rd.tttrove.qzz.io
       - RUSTDESK_API_RUSTDESK_RELAY_SERVER=rd.tttrove.qzz.io
       - RUSTDESK_API_RUSTDESK_API_SERVER=https://rd.tttrove.qzz.io
       - RUSTDESK_API_RUSTDESK_KEY_FILE=/data/id_ed25519.pub
-      - RUSTDESK_API_JWT_KEY=${RUSTDESK_API_JWT_KEY}   # 从 .env 注入，不入库
+      - RUSTDESK_API_JWT_KEY=${RUSTDESK_API_JWT_KEY}
     volumes:
-      - ./data:/data            # 信令数据库 + 密钥对
-      - ./api-data:/app/data    # API 账号/设备数据库
-    network_mode: "host"        # 直接复用主机网络，避免端口映射遗漏
+      - ./data:/data           # 旧密钥挂载此处
+      - ./api-data:/app/data
+    network_mode: "host"
     restart: unless-stopped
 ```
 
-启动/重建：
+### 4.3 创建 .env 文件
+
+```bash
+# 生成随机 JWT 密钥
+echo "RUSTDESK_API_JWT_KEY=$(openssl rand -hex 32)" > /home/ubuntu/Apps/rustdesk/.env
+sudo chmod 600 /home/ubuntu/Apps/rustdesk/.env
+```
+
+### 4.4 创建数据目录并启动
 
 ```bash
 cd /home/ubuntu/Apps/rustdesk
-sudo docker compose up -d        # 首次启动或配置变更后重建
-sudo docker compose logs -f      # 查看启动日志，确认四组件均正常
+sudo mkdir -p data api-data
+sudo docker compose up -d
 ```
 
-## 6. Nginx + HTTPS 速查
+### 4.5 获取初始 admin 密码
 
 ```bash
-# 1. 安装官方源 Nginx（Ubuntu 24.04）
-sudo apt update
-sudo apt install -y curl gnupg2 ca-certificates lsb-release
-curl -fsSL https://nginx.org/keys/nginx_signing.key | sudo gpg --dearmor -o /usr/share/keyrings/nginx-archive-keyring.gpg
-echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] http://nginx.org/packages/ubuntu $(lsb_release -cs) nginx" \
-  | sudo tee /etc/apt/sources.list.d/nginx.list
-sudo apt update && sudo apt install -y nginx   # 装出 1.30.x
-
-# 2. 申请证书（webroot 方式，先放行 80 端口）
-sudo apt install -y certbot
-sudo certbot certonly --webroot -w /var/www/html -d rd.tttrove.qzz.io
+sudo docker logs rustdesk 2>&1 | grep "Admin Password"
+# 输出示例：Admin Password Is: xxxxxx
 ```
 
-核心反代配置：
+**立即登录改密**：`https://rd.tttrove.qzz.io/_admin/`
+
+### 4.6 核心环境变量说明
+
+| 变量 | 作用 | 调整建议 |
+|------|------|---------|
+| `ENCRYPTED_ONLY` | `0`=兼容模式 `1`=强制加密 | 测试用 `0`，生产用 `1` |
+| `MUST_LOGIN` | `N`=可匿名连接 `Y`=强制登录 | **客户端全配好后再改 `Y`** |
+| `RUSTDESK_API_LANG` | 控制台语言 | `zh-CN` / `en` |
+| `RUSTDESK_API_APP_REGISTER` | 是否允许公开注册 | 建议 `false` |
+| `RUSTDESK_API_JWT_KEY` | API JWT 签名密钥 | 随机 32 字节，设定后不可随意改 |
+
+> **警告**：`MUST_LOGIN=Y` 和 `ENCRYPTED_ONLY=1` 不要在部署初期同时启用，会导致所有未配置 API Server 的客户端无法连接。
+
+---
+
+## 5. Nginx + HTTPS
+
+### 5.1 安装 nginx.org 官方版
+
+```bash
+# 添加 nginx.org 官方仓库
+curl -fsSL https://nginx.org/keys/nginx_signing.key | gpg --dearmor | sudo tee /usr/share/keyrings/nginx-archive-keyring.gpg
+echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] https://nginx.org/packages/ubuntu $(lsb_release -cs) nginx" | sudo tee /etc/apt/sources.list.d/nginx.list
+
+# 安装 nginx + certbot
+sudo apt update && sudo apt install -y nginx certbot
+
+# 启动
+sudo systemctl enable --now nginx
+```
+
+### 5.2 签发 Let's Encrypt 证书
+
+```bash
+# 创建 webroot 目录
+sudo mkdir -p /var/www/html
+sudo chown -R www-data:www-data /var/www/html
+
+# 签发证书（webroot 模式）
+sudo certbot certonly --webroot -w /var/www/html -d rd.tttrove.qzz.io --non-interactive --agree-tos -m admin@yourdomain.com
+
+# 验证
+sudo certbot certificates
+```
+
+### 5.3 Nginx 反向代理配置
 
 ```nginx
 # /etc/nginx/conf.d/rustdesk.conf
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+# 80 端口：acme-challenge + HTTP→HTTPS 跳转
+server {
+    listen 80;
+    listen [::]:80;
+    server_name rd.tttrove.qzz.io;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+# 443 端口：HTTPS 反代到容器 21114
 server {
     listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
     server_name rd.tttrove.qzz.io;
 
     ssl_certificate     /etc/letsencrypt/live/rd.tttrove.qzz.io/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/rd.tttrove.qzz.io/privkey.pem;
 
-    location / {
-        proxy_pass http://127.0.0.1:21114;       # 转发到容器内 Web/API 端口
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;  # 配合 GIN_TRUST_PROXY
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-}
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 1d;
 
-server {
-    listen 80;
-    server_name rd.tttrove.qzz.io;
-    location /.well-known/acme-challenge/ { root /var/www/html; }  # 续期校验
-    location / { return 301 https://$host$request_uri; }
+    add_header Strict-Transport-Security "max-age=31536000" always;
+
+    client_max_body_size 0;
+
+    location / {
+        proxy_pass http://127.0.0.1:21114;
+        proxy_http_version 1.1;
+
+        # WebSocket 支持（在线状态 / Web Client 需要）
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # 长连接超时
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
 }
 ```
 
 ```bash
-sudo nginx -t && sudo systemctl reload nginx   # 校验配置并热加载
+# 测试并重载
+sudo nginx -t && sudo systemctl reload nginx
 ```
 
-## 7. Windows 客户端配置
+**删除默认配置避免冲突**：
 
-GUI 手填（设置 → 网络 → 取消勾选"使用 ID/中继服务器"后填）：
+```bash
+sudo rm -f /etc/nginx/conf.d/default.conf
+```
 
-|字段|值|
-|---|---|
-|ID 服务器|`rd.tttrove.qzz.io`|
-|中继服务器|`rd.tttrove.qzz.io`|
-|API 服务器|`https://rd.tttrove.qzz.io`|
-|Key|`YOUR_SERVER_PUBLIC_KEY_HERE`|
+---
 
-PowerShell 批量配置脚本：
+## 6. Windows 客户端配置
+
+### 6.1 GUI 手动配置
+
+RustDesk → 设置 → 网络 → ID/中继服务器：
+
+| 字段 | 值 |
+|------|------|
+| ID 服务器 | `rd.tttrove.qzz.io` |
+| 中继服务器 | `rd.tttrove.qzz.io` |
+| API 服务器 | `https://rd.tttrove.qzz.io` |
+| Key | `YOUR_SERVER_PUBLIC_KEY_HERE` |
+
+> **提示**：填完点应用，**彻底退出 RustDesk 托盘图标再重启**（右键托盘 → Quit → 重新打开）。
+
+### 6.2 PowerShell CLI 批量配置
 
 ```powershell
-# 以管理员身份运行，按需替换 exe 路径
+# 必须以管理员身份运行
 $rd = "C:\Program Files\RustDesk\rustdesk.exe"
-& $rd --option id-server "rd.tttrove.qzz.io"
+& $rd --option custom-rendezvous-server "rd.tttrove.qzz.io"
 & $rd --option relay-server "rd.tttrove.qzz.io"
 & $rd --option api-server "https://rd.tttrove.qzz.io"
 & $rd --option key "YOUR_SERVER_PUBLIC_KEY_HERE"
 ```
 
-验证方法：
+> **注意**：`--option` 命令执行后**无回显**（GUI 子系统程序 stdout 不输出到 PowerShell）。验证需读配置文件。
 
-```bash
-# 客户端本地：右下角状态应显示已连接到自建服务器，而非默认公共服务器
-# 服务器端：观察容器日志中是否有设备心跳/注册记录
-sudo docker compose logs -f --tail=50 rustdesk
+### 6.3 验证配置
+
+```powershell
+# 读取配置文件确认
+Get-Content "$env:APPDATA\RustDesk\config\RustDesk2.toml"
 ```
 
-## 8. 控制台使用
+检查 `[options]` 段是否包含：
 
-- Web Admin 地址：`https://rd.tttrove.qzz.io`，用管理员账号登录（密码自行设置，不要使用默认值）。
-- 设备列表中可为每台机器设置**别名**，方便区分；支持按标签分组。
-- 地址簿支持团队共享，登录同一账号的客户端会自动同步地址簿与权限分组，适合多人协作运维。
-
-## 9. 故障速查表
-
-|现象|可能原因|处理方式|
-|---|---|---|
-|客户端全部离线|坑1：过早开启 `MUST_LOGIN=Y`，旧客户端未登录被拒|先确认所有终端已配置账号登录，再切换为 `Y`；紧急情况下改回 `N` 并 `docker compose up -d` 重建|
-|连接超时/打洞失败|安全组 UDP 21116 或 TCP 21115-21119 未放行/被清理|重新检查腾讯云安全组规则，必要时用 `sudo iptables -L -n` 核对本机防火墙兜底规则|
-|`curl` 测试 443 返回拒绝|坑3：直接用 IP 测试触发 Nginx 的 Host 头校验失败|改用 `curl -4 --resolve rd.tttrove.qzz.io:443:<服务器IP> https://rd.tttrove.qzz.io` 模拟真实域名请求|
-
-## 10. 长期维护
-
-- **容器更新**：`sudo docker compose pull && sudo docker compose up -d`，更新前建议备份 `data/` 和 `api-data/`。
-- **备份策略**：定期打包 `/home/ubuntu/Apps/rustdesk/{data,api-data}` 异地存放，密钥对（`id_ed25519*`）丢失会导致所有客户端需要重新配置 Key。
-
-### 证书续期（已验证）
-
-`apt` 安装的 certbot 自带 `certbot.timer`，每天检查两次，证书剩余有效期 <30 天才会真正续期，不需要额外加 cron：
-
-```bash
-sudo systemctl status certbot.timer    # Active: active (waiting)，Loaded: enabled 即正常
-sudo systemctl list-timers | grep certbot   # 确认下一次 Trigger 时间
+```toml
+[options]
+custom-rendezvous-server = 'rd.tttrove.qzz.io'
+key = 'YOUR_SERVER_PUBLIC_KEY_HERE'
+api-server = 'https://rd.tttrove.qzz.io'
+relay-server = 'rd.tttrove.qzz.io'
 ```
 
-但 Nginx 不会自动感知证书文件更新，**必须配置 deploy-hook 让续期后自动 reload**，否则证书换了但 Nginx 进程里还在用旧证书：
+### 6.4 客户端登录账号
 
-```bash
-sudo mkdir -p /etc/letsencrypt/renewal-hooks/deploy
-sudo tee /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh <<'EOF'
-#!/bin/bash
-systemctl reload nginx
-EOF
-sudo chmod +x /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh
+打开 RustDesk → 右上角 ≡ → **设置 → 账户 → 登录**
+
+输入 Web 控制台的账号密码（默认 `admin` + 初始密码）。
+
+登录后设备会自动注册到 `peers` 表，`user_id` 绑定为当前登录用户。
+
+---
+
+## 7. 控制台使用
+
+### 7.1 Web 控制台地址
+
+```
+https://rd.tttrove.qzz.io/_admin/
 ```
 
-部署完 hook 后用 `--dry-run` 验证一次完整流程（不会真的换证书，只验证 webroot 校验路径是否畅通）：
+### 7.2 设备管理与别名设置
+
+Web 控制台 → **设备管理** → 编辑设备 `alias` 字段：
+
+| 原主机名 | 建议别名 |
+|---------|---------|
+| `msi-b660m` | `HOME-PC` |
+| `dell-vostro` | `DELL-LAPTOP` |
+
+改完后，所有登录 admin 的客户端，其地址簿会**自动同步别名**，从此不用记数字 ID。
+
+### 7.3 设备分组
+
+Web 控制台 → 设备管理 → 群组管理：
+
+- 创建群组：`家用` / `公司`
+- 将设备分配到群组
+- 客户端地址簿会同步分组结构
+
+### 7.4 Web Client 浏览器远控
+
+无需安装客户端，直接浏览器访问：
+
+```
+https://rd.tttrove.qzz.io/_webclient/
+```
+
+输入目标设备 ID 和密码即可远控（适合临时访问场景）。
+
+### 7.5 审计日志
+
+控制台提供三类日志：
+
+- **登录日志**：记录所有账号登录（IP、设备、时间）
+- **连接日志**：记录所有远程连接会话
+- **文件传输日志**：记录文件传输操作
+
+---
+
+## 8. 故障速查表
+
+| 现象 | 原因 | 解决 |
+|------|------|------|
+| 客户端显示离线 / 无法连接 | `MUST_LOGIN=Y` 或 `ENCRYPTED_ONLY=1` 过早启用 | 先设 `MUST_LOGIN=N`、`ENCRYPTED_ONLY=0`，等客户端全配好再加固 |
+| 客户端账号登录超时 `TimedOut` | 腾讯云安全组未放行 IPv4 443 端口 | 在腾讯云控制台安全组入站规则放行 TCP4 443 |
+| `curl -4 https://IP:443` 返回 `000` | Nginx `server_name` 仅匹配 `rd.*` 域名，IP 直接访问被拒 | 用 `curl --resolve rd.tttrove.qzz.io:443:<IP>` 按域名测试 |
+
+### 关键排查命令
 
 ```bash
+# 查容器状态与日志
+sudo docker ps
+sudo docker logs rustdesk --tail 50
+
+# 查端口监听
+sudo ss -tlnp | grep -E ":(80|443|21114|21116) "
+
+# 抓包确认客户端请求是否到达
+sudo tcpdump -i any -n "udp port 21116" -c 20
+
+# 查设备注册情况
+sudo sqlite3 /home/ubuntu/Apps/rustdesk/api-data/rustdeskapi.db \
+  "SELECT id,hostname,user_id,alias FROM peers;"
+```
+
+---
+
+## 9. 长期维护
+
+### 9.1 查看容器状态
+
+```bash
+cd /home/ubuntu/Apps/rustdesk
+sudo docker compose ps
+sudo docker logs rustdesk --tail 50
+```
+
+### 9.2 更新容器镜像
+
+```bash
+cd /home/ubuntu/Apps/rustdesk
+sudo docker compose pull
+sudo docker compose up -d
+```
+
+### 9.3 证书续期验证
+
+```bash
+# 查看证书状态
+sudo certbot certificates
+
+# 测试自动续期（不影响现有证书）
 sudo certbot renew --dry-run
 ```
 
-日常巡检：
+> **提示**：certbot 安装时已自动注册 systemd timer，会在证书到期前 30 天自动续期。`--dry-run` 仅用于验证续期流程是否正常。
+
+### 9.4 备份关键数据
 
 ```bash
-sudo certbot certificates    # 查看 rd.tttrove.qzz.io 证书剩余天数
+# 完整备份（密钥 + 数据库 + 配置）
+sudo tar -czf rustdesk-backup-$(date +%Y%m%d).tar.gz \
+  /home/ubuntu/Apps/rustdesk/data \
+  /home/ubuntu/Apps/rustdesk/api-data \
+  /home/ubuntu/Apps/rustdesk/compose.yml \
+  /home/ubuntu/Apps/rustdesk/.env
 ```
 
-## 11. 总结
+**密钥备份策略**：
 
-通过 Docker 一体化镜像 + Nginx 反代 + Let's Encrypt，在腾讯云上低成本搭建了私有 RustDesk 服务，兼顾易维护与可控性，适合长期自托管。
+- `id_ed25519` 私钥必须加密备份
+- 推荐 Bandizip / 7-Zip **AES-256** 加密 + 强密码 + 文件名加密
+- 加密后上传 OneDrive 等云存储
+- **不建议**把密钥目录直接实时同步到网盘
 
-## 12. 参考资料
+### 9.5 重置 admin 密码
 
+```bash
+# 忘记密码时的重置命令
+sudo docker exec rustdesk ./apimain reset-admin-pwd <新密码>
+```
+
+### 9.6 查看登录日志
+
+```bash
+sudo sqlite3 /home/ubuntu/Apps/rustdesk/api-data/rustdeskapi.db \
+  "SELECT id,user_id,client,ip,platform,created_at FROM login_logs ORDER BY id DESC LIMIT 10;"
+```
+
+---
+
+## 10. 总结
+
+RustDesk OSS 本身没有 Pro 控制台，但通过 `lejianwen/rustdesk-api` 社区项目可以补齐设备列表、登录认证、地址簿同步、审计日志等核心能力，实现接近 TeamViewer 的体验。
+
+部署中最容易踩坑的 4 个点：
+
+1. **DNS 双栈**：A + AAAA 记录都要加，确保 IPv4-only 和 IPv6-only 客户端都能访问
+2. **443 端口**：腾讯云安全组必须显式放行 TCP4 443，否则 IPv4 客户端登录超时
+3. **`MUST_LOGIN`**：不要在客户端未配好 API Server 前启用，否则所有客户端断连
+4. **`ENCRYPTED_ONLY`**：不要在初期启用，与旧客户端握手不兼容会导致连接被拒
+
+**稳定部署的顺序**：
+
+```text
+先跑通连接（ENCRYPTED_ONLY=0, MUST_LOGIN=N）
+  → 配置 API Server
+    → 客户端登录 admin 账号
+      → 验证设备注册 + 地址簿同步
+        → 最后考虑安全加固（ENCRYPTED_ONLY=1, MUST_LOGIN=Y）
+```
+
+掌握这套方案后，你可以：
+
+- 在自己的云主机上运行完整的 RustDesk 私有服务
+- 用 PowerShell CLI 批量配置多台 Windows 客户端
+- 通过 Web 控制台管理设备别名与分组
+- 不再依赖 TeamViewer 或 RustDesk 官方 SaaS
+
+---
+
+## 11. 参考资料
+
+- [lejianwen/rustdesk-api（后端 + Web Admin + Web Client）](https://github.com/lejianwen/rustdesk-api)
+- [lejianwen/rustdesk-server（fork 增强版服务端）](https://github.com/lejianwen/rustdesk-server)
+- [rustdesk/rustdesk-server（官方 OSS 服务端）](https://github.com/rustdesk/rustdesk-server)
 - [RustDesk 官方文档](https://rustdesk.com/docs/)
-- [lejianwen/rustdesk-server-s6 镜像仓库](https://github.com/lejianwen/rustdesk-server-s6)
-- [Nginx 官方安装文档](https://nginx.org/en/linux_packages.html)
+- [nginx.org 官方仓库安装指南](https://nginx.org/en/linux_packages.html)
 - [Certbot 官方文档](https://certbot.eff.org/)
