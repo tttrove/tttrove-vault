@@ -31,9 +31,11 @@ created: 2026-06-21
 - [3. 目录结构](#3-目录结构)
 - [4. Docker Compose 部署](#4-docker-compose-部署)
 - [5. Nginx + HTTPS](#5-nginx--https)
-  - [5.1 安装 nginx.org 官方版](#51-安装-nginxorg-官方版)
-  - [5.2 签发 Let's Encrypt 证书](#52-签发-lets-encrypt-证书)
-  - [5.3 Nginx 反向代理配置](#53-nginx-反向代理配置)
+  - [5.1 安装 nginx.org 官方版 + certbot DNS 插件](#51-安装-nginxorg-官方版--certbot-dns-插件)
+  - [5.2 创建 Cloudflare API Token](#52-创建-cloudflare-api-token)
+  - [5.3 签发 Let's Encrypt 证书（DNS 验证）](#53-签发-lets-encrypt-证书dns-验证)
+  - [5.4 Nginx 反向代理配置（仅 443，不监听 80）](#54-nginx-反向代理配置仅-443不监听-80)
+  - [5.5 腾讯云安全组关闭 80 端口](#55-腾讯云安全组关闭-80-端口)
 - [6. Windows 客户端配置](#6-windows-客户端配置)
   - [6.1 GUI 手动配置](#61-gui-手动配置)
   - [6.2 PowerShell CLI 批量配置](#62-powershell-cli-批量配置)
@@ -88,7 +90,7 @@ created: 2026-06-21
 
 | 端口 | 协议 | 用途 |
 |------|------|------|
-| 80 | TCP4/TCP6 | HTTP→HTTPS 跳转 + 证书续期 |
+| ~~80~~ | ~~TCP4/TCP6~~ | ~~HTTP 跳转 + 证书续期~~ **可关闭**（证书续期走 Cloudflare DNS 验证，不依赖 80） |
 | 443 | TCP4/TCP6 | Web Admin / API HTTPS |
 | 21115 | TCP4/TCP6 | hbbs NAT 测试 |
 | 21116 | TCP4/TCP6 + UDP4/UDP6 | hbbs ID 注册（UDP 必须放行） |
@@ -202,72 +204,96 @@ sudo docker logs rustdesk 2>&1 | grep "Admin Password"
 
 ## 5. Nginx + HTTPS
 
-### 5.1 安装 nginx.org 官方版
+### 5.1 安装 nginx.org 官方版 + certbot DNS 插件
 
 ```bash
 # 添加 nginx.org 官方仓库
 curl -fsSL https://nginx.org/keys/nginx_signing.key | gpg --dearmor | sudo tee /usr/share/keyrings/nginx-archive-keyring.gpg
 echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] https://nginx.org/packages/ubuntu $(lsb_release -cs) nginx" | sudo tee /etc/apt/sources.list.d/nginx.list
 
-# 安装 nginx + certbot
-sudo apt update && sudo apt install -y nginx certbot
+# 安装 nginx + certbot + Cloudflare DNS 插件
+sudo apt update && sudo apt install -y nginx certbot python3-certbot-dns-cloudflare
 
 # 启动
 sudo systemctl enable --now nginx
 ```
 
-### 5.2 签发 Let's Encrypt 证书
+> **为什么用 Cloudflare DNS 验证而非 webroot**：webroot 模式必须开放 80 端口给公网，证书续期时 Let's Encrypt 会访问 `http://域名/.well-known/acme-challenge/`。DNS 验证通过 Cloudflare API 写 TXT 记录验证，**完全不需要 80 端口**，可彻底关闭 80 端口减少攻击面。
+
+### 5.2 创建 Cloudflare API Token
+
+1. 登录 Cloudflare → 右上角头像 → **My Profile** → **API Tokens**
+2. 点 **Create Token** → 选模板 **"Edit zone DNS"**
+3. 权限：`Zone` → `DNS` → `Edit`（模板默认）
+4. Zone Resources：`Include` → `Specific zone` → `tttrove.qzz.io`
+5. 创建并复制 Token（只显示一次）
+
+写入凭证文件（权限 600 仅 root 可读）：
 
 ```bash
-# 创建 webroot 目录
-sudo mkdir -p /var/www/html
-sudo chown -R www-data:www-data /var/www/html
+sudo tee /etc/letsencrypt/cloudflare.ini > /dev/null << 'EOF'
+dns_cloudflare_api_token = 你的Cloudflare_API_Token
+EOF
+sudo chmod 600 /etc/letsencrypt/cloudflare.ini
+sudo chown root:root /etc/letsencrypt/cloudflare.ini
+```
 
-# 签发证书（webroot 模式）
-sudo certbot certonly --webroot -w /var/www/html -d rd.tttrove.qzz.io --non-interactive --agree-tos -m admin@yourdomain.com
+### 5.3 签发 Let's Encrypt 证书（DNS 验证）
+
+```bash
+# 签发证书（Cloudflare DNS 验证，不依赖 80 端口）
+sudo certbot certonly \
+  --dns-cloudflare \
+  --dns-cloudflare-credentials /etc/letsencrypt/cloudflare.ini \
+  -d rd.tttrove.qzz.io \
+  --non-interactive \
+  --agree-tos \
+  -m admin@yourdomain.com
 
 # 验证
 sudo certbot certificates
+
+# 测试自动续期（注意加 --no-random-sleep-on-renew 避免随机延迟）
+sudo certbot renew --dry-run --no-random-sleep-on-renew
 ```
 
-### 5.3 Nginx 反向代理配置
+> **提示**：certbot 已自动注册 systemd timer，证书到期前 30 天自动续期。DNS 验证续期无需 80 端口，可在安全组彻底关闭 80。
+
+### 5.4 Nginx 反向代理配置（仅 443，不监听 80）
 
 ```nginx
 # /etc/nginx/conf.d/rustdesk.conf
+# 证书续期走 Cloudflare DNS 验证，不依赖 80 端口
+
 map $http_upgrade $connection_upgrade {
     default upgrade;
     ''      close;
 }
 
-# 80 端口：acme-challenge + HTTP→HTTPS 跳转
-server {
-    listen 80;
-    listen [::]:80;
-    server_name rd.tttrove.qzz.io;
-
-    location /.well-known/acme-challenge/ {
-        root /var/www/html;
-    }
-
-    location / {
-        return 301 https://$host$request_uri;
-    }
-}
-
 # 443 端口：HTTPS 反代到容器 21114
 server {
-    listen 443 ssl;
-    listen [::]:443 ssl;
+    listen 443 ssl default_server;
+    listen [::]:443 ssl default_server;
     http2 on;
     server_name rd.tttrove.qzz.io;
+
+    # 非 rd 域名访问 443 时拒绝（证书不匹配，浏览器自动拦截）
+    if ($host != rd.tttrove.qzz.io) {
+        return 444;
+    }
 
     ssl_certificate     /etc/letsencrypt/live/rd.tttrove.qzz.io/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/rd.tttrove.qzz.io/privkey.pem;
 
     ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305;
+    ssl_prefer_server_ciphers off;
     ssl_session_cache shared:SSL:10m;
     ssl_session_timeout 1d;
 
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
     add_header Strict-Transport-Security "max-age=31536000" always;
 
     client_max_body_size 0;
@@ -288,6 +314,7 @@ server {
         # 长连接超时
         proxy_read_timeout 3600s;
         proxy_send_timeout 3600s;
+        proxy_connect_timeout 60s;
     }
 }
 ```
@@ -297,11 +324,28 @@ server {
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
-**删除默认配置避免冲突**：
+**删除残留默认配置（避免 80 端口被默认 server 监听）**：
 
 ```bash
 sudo rm -f /etc/nginx/conf.d/default.conf
+sudo rm -f /etc/nginx/sites-available/default
+sudo rm -f /etc/nginx/sites-enabled/default
+
+# 重启 nginx 确保老 worker 退出（reload 不会立即停老 worker）
+sudo systemctl restart nginx
+
+# 验证 80 端口已无监听
+sudo ss -tlnp | grep ":80 " || echo "✓ 80 端口已无监听"
 ```
+
+### 5.5 腾讯云安全组关闭 80 端口
+
+证书续期已切换为 Cloudflare DNS 验证，**80 端口不再有任何业务依赖**。去腾讯云控制台安全组删除 80 端口的入站规则（TCP4/TCP6 都删）。
+
+> **验证清单**：关 80 后依次确认
+> - `https://rd.tttrove.qzz.io/_admin/` 仍可访问（走 443）
+> - RustDesk 客户端设备仍在线（走 21116 UDP）
+> - `sudo certbot renew --dry-run` 成功（走 Cloudflare API）
 
 ---
 
