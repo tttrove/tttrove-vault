@@ -1,8 +1,6 @@
 ---
-title: RustDesk 私有部署速查：Docker + Nginx + API 三件套
-tags: [RustDesk, Docker, Nginx, 腾讯云, 自托管, 远程桌面]
-created: 2026-06-21
----
+
+## title: RustDesk 私有部署速查：Docker + Nginx + API 三件套 tags: [RustDesk, Docker, Nginx, 腾讯云, 自托管, 远程桌面] created: 2026-06-21
 
 # RustDesk 私有部署速查：Docker + Nginx + API 三件套
 
@@ -16,20 +14,20 @@ created: 2026-06-21
 
 ## 3. DNS 与安全组
 
-| 项目 | 配置 |
+|项目|配置|
 |---|---|
-| 域名 | `rd.tttrove.qzz.io` |
-| DNS 记录 | A 记录 → 服务器公网 IPv4；AAAA 记录 → 服务器公网 IPv6 |
-| 域名隔离 | `rd.tttrove.qzz.io` 专用 RustDesk；`linux.tttrove.qzz.io` 留给 SSH，避免混用 |
+|域名|`rd.tttrove.qzz.io`|
+|DNS 记录|A 记录 → 服务器公网 IPv4；AAAA 记录 → 服务器公网 IPv6|
+|域名隔离|`rd.tttrove.qzz.io` 专用 RustDesk；`linux.tttrove.qzz.io` 留给 SSH，避免混用|
 
 腾讯云安全组放行端口：
 
-| 端口 | 协议 | 用途 |
+|端口|协议|用途|
 |---|---|---|
-| 80 | TCP | HTTP，证书校验/跳转 |
-| 443 | TCP4/TCP6 | HTTPS，Web/API/信令统一入口 |
-| 21115-21119 | TCP4/TCP6 | hbbs/hbbr 信令与中继 |
-| 21116 | UDP4/UDP6 | hbbs UDP 打洞 |
+|80|TCP|HTTP，证书校验/跳转|
+|443|TCP4/TCP6|HTTPS，Web/API/信令统一入口|
+|21115-21119|TCP4/TCP6|hbbs/hbbr 信令与中继|
+|21116|UDP4/UDP6|hbbs UDP 打洞|
 
 > ⚠️ 坑2：腾讯云安全组的 IPv4 443 规则有被自动清理的情况，建议定期检查，并用 iptables 做兜底（见第 9 节）。
 
@@ -143,12 +141,12 @@ sudo nginx -t && sudo systemctl reload nginx   # 校验配置并热加载
 
 GUI 手填（设置 → 网络 → 取消勾选"使用 ID/中继服务器"后填）：
 
-| 字段 | 值 |
+|字段|值|
 |---|---|
-| ID 服务器 | `rd.tttrove.qzz.io` |
-| 中继服务器 | `rd.tttrove.qzz.io` |
-| API 服务器 | `https://rd.tttrove.qzz.io` |
-| Key | `YOUR_SERVER_PUBLIC_KEY_HERE` |
+|ID 服务器|`rd.tttrove.qzz.io`|
+|中继服务器|`rd.tttrove.qzz.io`|
+|API 服务器|`https://rd.tttrove.qzz.io`|
+|Key|`YOUR_SERVER_PUBLIC_KEY_HERE`|
 
 PowerShell 批量配置脚本：
 
@@ -177,17 +175,48 @@ sudo docker compose logs -f --tail=50 rustdesk
 
 ## 9. 故障速查表
 
-| 现象 | 可能原因 | 处理方式 |
+|现象|可能原因|处理方式|
 |---|---|---|
-| 客户端全部离线 | 坑1：过早开启 `MUST_LOGIN=Y`，旧客户端未登录被拒 | 先确认所有终端已配置账号登录，再切换为 `Y`；紧急情况下改回 `N` 并 `docker compose up -d` 重建 |
-| 连接超时/打洞失败 | 安全组 UDP 21116 或 TCP 21115-21119 未放行/被清理 | 重新检查腾讯云安全组规则，必要时用 `sudo iptables -L -n` 核对本机防火墙兜底规则 |
-| `curl` 测试 443 返回拒绝 | 坑3：直接用 IP 测试触发 Nginx 的 Host 头校验失败 | 改用 `curl -4 --resolve rd.tttrove.qzz.io:443:<服务器IP> https://rd.tttrove.qzz.io` 模拟真实域名请求 |
+|客户端全部离线|坑1：过早开启 `MUST_LOGIN=Y`，旧客户端未登录被拒|先确认所有终端已配置账号登录，再切换为 `Y`；紧急情况下改回 `N` 并 `docker compose up -d` 重建|
+|连接超时/打洞失败|安全组 UDP 21116 或 TCP 21115-21119 未放行/被清理|重新检查腾讯云安全组规则，必要时用 `sudo iptables -L -n` 核对本机防火墙兜底规则|
+|`curl` 测试 443 返回拒绝|坑3：直接用 IP 测试触发 Nginx 的 Host 头校验失败|改用 `curl -4 --resolve rd.tttrove.qzz.io:443:<服务器IP> https://rd.tttrove.qzz.io` 模拟真实域名请求|
 
 ## 10. 长期维护
 
 - **容器更新**：`sudo docker compose pull && sudo docker compose up -d`，更新前建议备份 `data/` 和 `api-data/`。
-- **证书续期**：Let's Encrypt 90 天有效，配置 cron 定时任务：`sudo certbot renew --quiet && sudo systemctl reload nginx`。
 - **备份策略**：定期打包 `/home/ubuntu/Apps/rustdesk/{data,api-data}` 异地存放，密钥对（`id_ed25519*`）丢失会导致所有客户端需要重新配置 Key。
+
+### 证书续期（已验证）
+
+`apt` 安装的 certbot 自带 `certbot.timer`，每天检查两次，证书剩余有效期 <30 天才会真正续期，不需要额外加 cron：
+
+```bash
+sudo systemctl status certbot.timer    # Active: active (waiting)，Loaded: enabled 即正常
+sudo systemctl list-timers | grep certbot   # 确认下一次 Trigger 时间
+```
+
+但 Nginx 不会自动感知证书文件更新，**必须配置 deploy-hook 让续期后自动 reload**，否则证书换了但 Nginx 进程里还在用旧证书：
+
+```bash
+sudo mkdir -p /etc/letsencrypt/renewal-hooks/deploy
+sudo tee /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh <<'EOF'
+#!/bin/bash
+systemctl reload nginx
+EOF
+sudo chmod +x /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh
+```
+
+部署完 hook 后用 `--dry-run` 验证一次完整流程（不会真的换证书，只验证 webroot 校验路径是否畅通）：
+
+```bash
+sudo certbot renew --dry-run
+```
+
+日常巡检：
+
+```bash
+sudo certbot certificates    # 查看 rd.tttrove.qzz.io 证书剩余天数
+```
 
 ## 11. 总结
 
