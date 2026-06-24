@@ -107,7 +107,7 @@ created: 2026-06-21
 
 ```yaml
 # /home/ubuntu/Apps/rustdesk/compose.yml
-services:
+    services:
   rustdesk:
     container_name: rustdesk
     image: lejianwen/rustdesk-server-s6:latest
@@ -119,13 +119,16 @@ services:
       - RUSTDESK_API_LANG=zh-CN
       - RUSTDESK_API_APP_REGISTER=false   # 禁止公开注册
       - RUSTDESK_API_APP_SHOW_SWAGGER=0   # 隐藏 API 文档
+      - RUSTDESK_API_APP_CAPTCHA_THRESHOLD=3
+      - RUSTDESK_API_APP_BAN_THRESHOLD=5
+      - RUSTDESK_API_GIN_TRUST_PROXY=127.0.0.1
       - RUSTDESK_API_RUSTDESK_ID_SERVER=rd.tttrove.qzz.io
       - RUSTDESK_API_RUSTDESK_RELAY_SERVER=rd.tttrove.qzz.io
-      - RUSTDESK_API_RUSTDESK_API_SERVER=https://rd.tttrove.qzz.io
+      - RUSTDESK_API_RUSTDESK_API_SERVER=https://rd.tttrove.qzz.io:8888
       - RUSTDESK_API_RUSTDESK_KEY_FILE=/data/id_ed25519.pub
       - RUSTDESK_API_JWT_KEY=${RUSTDESK_API_JWT_KEY}
     volumes:
-      - ./data:/data           # 密钥挂载此处（从备份恢复 id_ed25519）
+      - ./data:/data
       - ./api-data:/app/data
     network_mode: "host"
     restart: unless-stopped
@@ -158,7 +161,7 @@ sudo docker compose up -d
 sudo docker logs rustdesk 2>&1 | grep "Admin Password"
 ```
 
-**立即登录改密**：`https://rd.tttrove.qzz.io/_admin/`
+**立即登录改密**：`https://rd.tttrove.qzz.io:8888/_admin/`
 
 ### 4.5 核心环境变量说明
 
@@ -221,7 +224,7 @@ sudo certbot renew --dry-run --no-random-sleep-on-renew
 
 > certbot 已自动注册 systemd timer，证书到期前 30 天自动续期，无需 80 端口。
 
-### 5.4 Nginx 反向代理配置（仅 443，不监听 80）
+### 5.4 Nginx 反向代理配置
 
 ```nginx
 # /etc/nginx/conf.d/rustdesk.conf
