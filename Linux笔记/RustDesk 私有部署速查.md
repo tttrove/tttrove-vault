@@ -227,19 +227,23 @@ sudo certbot renew --dry-run --no-random-sleep-on-renew
 ### 5.4 Nginx 反向代理配置
 
 ```nginx
-# /etc/nginx/conf.d/rustdesk.conf
+# RustDesk Web Admin / API Server reverse proxy
+# 仅响应 rd.tttrove.qzz.io, linux.* 不再提供面板服务
+# 证书续期走 Cloudflare DNS 验证, 不依赖 80 端口
+
 map $http_upgrade $connection_upgrade {
     default upgrade;
     ''      close;
 }
 
+# 8888 端口 rd: HTTPS 反代到 rustdesk-server-s6 容器 21114
 server {
-    listen 443 ssl default_server;
-    listen [::]:443 ssl default_server;
+    listen 8888 ssl default_server;
+    listen [::]:8888 ssl default_server;
     http2 on;
     server_name rd.tttrove.qzz.io;
 
-    # 非 rd 域名访问 443 时拒绝（证书不匹配，浏览器自动拦截）
+    # 非 rd 域名访问 8888 时拒绝 (证书会不匹配, 浏览器自动拦截)
     if ($host != rd.tttrove.qzz.io) {
         return 444;
     }
@@ -260,11 +264,47 @@ server {
 
     client_max_body_size 0;
 
+    # 1. 默认路由：反代到 API Server / 网页控制面板 (21114)
     location / {
         proxy_pass http://127.0.0.1:21114;
         proxy_http_version 1.1;
 
-        # WebSocket 支持（在线状态 / Web Client 需要）
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        proxy_connect_timeout 60s;
+    }
+
+    # 2. 核心补充：Web Client V2 专用的 ID 服务器 WebSocket 转发 (21118)
+    location /ws/id {
+        proxy_pass http://127.0.0.1:21118;
+        proxy_http_version 1.1;
+
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        proxy_connect_timeout 60s;
+    }
+
+    # 3. 核心补充：Web Client V2 专用的中继服务器 WebSocket 转发 (21119)
+    location /ws/relay {
+        proxy_pass http://127.0.0.1:21119;
+        proxy_http_version 1.1;
+
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection $connection_upgrade;
 
@@ -305,7 +345,7 @@ RustDesk → 设置 → 网络 → ID/中继服务器：
 |------|------|
 | ID 服务器 | `rd.tttrove.qzz.io` |
 | 中继服务器 | `rd.tttrove.qzz.io` |
-| API 服务器 | `https://rd.tttrove.qzz.io` |
+| API 服务器 | `https://rd.tttrove.qzz.io:8888` |
 | Key | `YOUR_SERVER_PUBLIC_KEY_HERE` |
 
 > 填完点应用，**彻底退出 RustDesk 托盘图标再重启**（右键托盘 → Quit → 重新打开）。
@@ -317,7 +357,7 @@ RustDesk → 设置 → 网络 → ID/中继服务器：
 $rd = "C:\Program Files\RustDesk\rustdesk.exe"
 & $rd --option custom-rendezvous-server "rd.tttrove.qzz.io"
 & $rd --option relay-server "rd.tttrove.qzz.io"
-& $rd --option api-server "https://rd.tttrove.qzz.io"
+& $rd --option api-server "https://rd.tttrove.qzz.io:8888"
 & $rd --option key "YOUR_SERVER_PUBLIC_KEY_HERE"
 ```
 
@@ -352,7 +392,7 @@ https://rd.tttrove.qzz.io/_admin/
 ### 7.3 Web Client 浏览器远控
 
 ```
-https://rd.tttrove.qzz.io/_webclient/
+https://rd.tttrove.qzz.io:8888/webclient2/
 ```
 
 无需安装客户端，浏览器输入目标设备 ID 和密码即可远控。
